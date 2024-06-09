@@ -12,10 +12,10 @@
 //! use rama::http::layer::set_header::SetRequestHeaderLayer;
 //! use rama::http::{Body, Request, Response, header::{self, HeaderValue}};
 //! use rama::service::{Context, Service, ServiceBuilder, service_fn};
-//! use rama::error::Error;
+//! use rama::error::BoxError;
 //!
 //! # #[tokio::main]
-//! # async fn main() -> Result<(), Error> {
+//! # async fn main() -> Result<(), BoxError> {
 //! # let http_client = service_fn(|_: Request| async move {
 //! #     Ok::<_, std::convert::Infallible>(Response::new(Body::empty()))
 //! # });
@@ -47,10 +47,10 @@
 //! use rama::http::{Body, Request, Response, header::{self, HeaderValue}};
 //! use rama::http::layer::set_header::SetRequestHeaderLayer;
 //! use rama::service::{Context, Service, ServiceBuilder, service_fn};
-//! use rama::error::Error;
+//! use rama::error::BoxError;
 //!
 //! # #[tokio::main]
-//! # async fn main() -> Result<(), Error> {
+//! # async fn main() -> Result<(), BoxError> {
 //! # let http_client = service_fn(|| async move {
 //! #     Ok::<_, std::convert::Infallible>(Response::new(Body::empty()))
 //! # });
@@ -82,8 +82,14 @@
 //! # }
 //! ```
 
+use http::HeaderValue;
+
 use super::{BoxMakeHeaderValueFn, InsertHeaderMode, MakeHeaderValue};
-use crate::http::{header::HeaderName, Request, Response};
+use crate::http::{
+    header::HeaderName,
+    headers::{Header, HeaderExt},
+    Request, Response,
+};
 use crate::service::{Context, Layer, Service};
 use std::fmt;
 
@@ -136,6 +142,29 @@ impl<M> SetRequestHeaderLayer<M> {
             header_name,
             mode,
         }
+    }
+}
+
+impl SetRequestHeaderLayer<HeaderValue> {
+    /// Create a new [`SetRequestHeaderLayer`] from a typed [`Header`].
+    ///
+    /// See [`SetRequestHeaderLayer::overriding`] for more details.
+    pub fn overriding_typed<H: Header>(header: H) -> Self {
+        Self::overriding(H::name().clone(), header.encode_to_value())
+    }
+
+    /// Create a new [`SetRequestHeaderLayer`] from a typed [`Header`].
+    ///
+    /// See [`SetRequestHeaderLayer::appending`] for more details.
+    pub fn appending_typed<H: Header>(header: H) -> Self {
+        Self::appending(H::name().clone(), header.encode_to_value())
+    }
+
+    /// Create a new [`SetRequestHeaderLayer`] from a typed [`Header`].
+    ///
+    /// See [`SetRequestHeaderLayer::if_not_present`] for more details.
+    pub fn if_not_present_typed<H: Header>(header: H) -> Self {
+        Self::if_not_present(H::name().clone(), header.encode_to_value())
     }
 }
 

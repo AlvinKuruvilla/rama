@@ -6,7 +6,7 @@
 //! might require for the life cycle of a connection, without it leaking
 //! into the entire app (service) lifecycle.
 //!
-//! This example will create a server that listens on `127.0.0.1:8080`.
+//! This example will create a server that listens on `127.0.0.1:62000`.
 //!
 //! # Run the example
 //!
@@ -16,10 +16,10 @@
 //!
 //! # Expected output
 //!
-//! The server will start and listen on `:8080`. You can use `curl` to check if the server is running:
+//! The server will start and listen on `:62000`. You can use `curl` to check if the server is running:
 //!
 //! ```sh
-//! curl -v http://127.0.0.1:8080
+//! curl -v http://127.0.0.1:62000
 //! ```
 //!
 //! You should see an HTTP Status 200 OK with a HTML payload containing the
@@ -114,7 +114,7 @@ where
 
 #[tokio::main]
 async fn main() {
-    let graceful = rama::graceful::Shutdown::default();
+    let graceful = rama::utils::graceful::Shutdown::default();
 
     graceful.spawn_task_fn(|guard| async move {
         let exec = Executor::graceful(guard.clone());
@@ -125,7 +125,7 @@ async fn main() {
         let alive = Arc::new(AtomicBool::new(true));
 
         TcpListener::build_with_state(AppState::default())
-            .bind("127.0.0.1:8080")
+            .bind("127.0.0.1:62000")
             .await
             .expect("bind TCP Listener")
             .serve_graceful(

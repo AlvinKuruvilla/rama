@@ -4,7 +4,7 @@
 >
 > — Some random dictionary.
 
-We advertise _rama_ as a modular proxy framework to move and transform network packets. It's in fact our tagline. Next to that you can read in [Why Rama](../why_rama.md) that one reason for _rama_ to exist is to allow you to easily
+We advertise _rama_ as a modular service framework to move and transform network packets. It's in fact our tagline. Next to that you can read in [Why Rama](../why_rama.md) that one reason for _rama_ to exist is to allow you to easily
 create proxies without having to do everything yourself but while still being
 able to write your own code where you wish.
 
@@ -31,7 +31,7 @@ Let's dive into a real example where we struggled ourselves in finding
 this balance between giving enough flexibility and at the same time
 keeping it simple enough.
 
-[`rama::service::layer::limit`](https://ramaproxy.org/docs/rama/service/layer/struct.Limit.html) is a generic middleware that allows you to limit what
+[`rama::service::layer::limit`](https://ramaproxy.org/docs/rama/service/layer/limit/struct.Limit.html) is a generic middleware that allows you to limit what
 requests can go through and which not. What this means depends a lot on
 the [`Policy`](https://ramaproxy.org/docs/rama/service/layer/limit/policy/trait.Policy.html) used.
 You could go as far as adding firewal capabilities to it, even

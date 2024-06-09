@@ -1,7 +1,9 @@
 [Preface](./preface.md)
 [Why Rama](./why_rama.md)
 [Built with Rust](./rust.md)
+[Do It Yourself](./diy.md)
 [Web Servers](./web_servers.md)
+[Http Clients](./http_clients.md)
 
 # Introduction
 
@@ -9,10 +11,15 @@
 - [Intro to `rama`](./intro.md)
     - [🗼 Services all the way down 🐢](./intro/services_all_the_way_down.md)
     - [Service Stack](./intro/service_stack.md)
-    - [🍔 Middlwares and ☘️ Leaf Services](./intro/terminology.md)
+    - [🍔 Middlewares and ☘️ Leaf Services](./intro/terminology.md)
     - [Network Layers](./intro/network_layers.md)
+    - [⛌ Service Branches](./intro/service_branches.md)
     - [☀️ Context<State>](./intro/context.md)
     - [🧱 Modular](./intro/modular.md)
+    - [🚚 Dynamic Dispatch](./intro/dynamic_dispatch.md)
+    - [🚫 Errors](./intro/errors.md)
+    - [🔭 Telemetry](./intro/telemetry.md)
+    - [👤 User Agent](./intro/user_agent.md)
 
 # Intro to Proxies
 
@@ -24,10 +31,11 @@
     - [🔎 MITM proxies](./proxies/mitm.md)
     - [🕵️‍♀️ Distortion proxies](./proxies/distort.md)
 
-# Configuring Rama
+# Binary
 
-- [Intro](./configuration/intro.md)
-- [Squid Directives](./configuration/squid-directives.md)
+- [⌨️ `rama` binary](./binary/rama.md)
 
-[❓ FAQ](./faq.md)
-[💖 Sponsor](./sponsor.md)
+# Appendices
+
+- [❓ FAQ](./faq.md)
+- [💖 Sponsor](./sponsor.md)

@@ -10,6 +10,7 @@
 [![Discord][discord-badge]][discord-url]
 [![Buy Me A Coffee][bmac-badge]][bmac-url]
 [![GitHub Sponsors][ghs-badge]][ghs-url]
+[![Paypal Donation][paypal-badge]][paypal-url]
 
 [crates-badge]: https://img.shields.io/crates/v/rama.svg
 [crates-url]: https://crates.io/crates/rama
@@ -30,8 +31,10 @@
 [bmac-url]: https://www.buymeacoffee.com/plabayo
 [ghs-badge]: https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA
 [ghs-url]: https://github.com/sponsors/plabayo
+[paypal-badge]: https://img.shields.io/badge/paypal-contribution?style=for-the-badge&color=blue
+[paypal-url]: https://www.paypal.com/donate/?hosted_button_id=P3KCGT2ACBVFE
 
-🦙 Rama (ラマ) is a modular proxy framework for the 🦀 Rust language to move and transform your network packets.
+🦙 Rama (ラマ) is a modular service framework for the 🦀 Rust language to move and transform your network packets.
 The reasons behind the creation of rama can be read in [the "Why Rama" chapter](https://ramaproxy.org/book/why_rama).
 
 ## rama-fp
@@ -91,7 +94,7 @@ sudo certbot certonly --manual -d fp.ramaproxy.org
 4. press `enter` in process started in step (1)
 5. copy key and cert files, found at and to be made available as secrets at:
   - `RAMA_FP_TLS_CRT`: `sudo cat /etc/letsencrypt/live/fp.ramaproxy.org/fullchain.pem | base64 | pbcopy`
-  - `RAMA_FP_TLS_KEY`: `sudo cat /etc/letsencrypt/live/fp.ramaproxy.org/privkey.pe | base64 | pbcopy`
+  - `RAMA_FP_TLS_KEY`: `sudo cat /etc/letsencrypt/live/fp.ramaproxy.org/privkey.pem | base64 | pbcopy`
 
 For now this process has to be repeated every 90 days, for both the `fp.*` and `h1.fp.*` subdomains.
 We can probably automate this already using a manual github action flow, given that `certbot` can be used

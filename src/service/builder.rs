@@ -6,9 +6,7 @@ use super::{
         layer_fn, AndThenLayer, Identity, LayerFn, MapErrLayer, MapRequestLayer, MapResponseLayer,
         MapResultLayer, MapStateLayer, Stack, ThenLayer, TraceErrLayer,
     },
-    service_fn,
-    util::combinators::Either,
-    BoxService, Layer, Service,
+    service_fn, BoxService, Layer, Service,
 };
 use std::fmt;
 use std::future::Future;
@@ -61,19 +59,6 @@ impl<L> ServiceBuilder<L> {
         ServiceBuilder {
             layer: Stack::new(layer, self.layer),
         }
-    }
-
-    /// Optionally add a new layer `T` into the [`ServiceBuilder`].
-    pub fn option_layer<T>(
-        self,
-        layer: Option<T>,
-    ) -> ServiceBuilder<Stack<Either<T, Identity>, L>> {
-        let layer = if let Some(layer) = layer {
-            Either::A(layer)
-        } else {
-            Either::B(Identity::new())
-        };
-        self.layer(layer)
     }
 
     /// Add a [`Layer`] built from a function that accepts a service and returns another service.
@@ -265,9 +250,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use futures_util::TryFutureExt;
     use std::convert::Infallible;
-    use std::future::Future;
 
     use crate::service::{Context, Service};
 
@@ -275,7 +258,7 @@ mod test {
 
     #[test]
     fn assert_send() {
-        use crate::test_helpers::*;
+        use crate::utils::test_helpers::*;
 
         assert_send::<ServiceBuilder<Identity>>();
         assert_send::<ServiceBuilder<Stack<Identity, Identity>>>();
@@ -284,7 +267,7 @@ mod test {
 
     #[test]
     fn assert_sync() {
-        use crate::test_helpers::*;
+        use crate::utils::test_helpers::*;
 
         assert_sync::<ServiceBuilder<Identity>>();
         assert_sync::<ServiceBuilder<Stack<Identity, Identity>>>();
@@ -296,20 +279,21 @@ mod test {
 
     impl<S, State, Request> Service<State, Request> for ToUpper<S>
     where
+        Request: Send + 'static,
         S: Service<State, Request>,
         S::Response: AsRef<str>,
+        State: Send + Sync + 'static,
     {
         type Response = String;
         type Error = S::Error;
 
-        fn serve(
+        async fn serve(
             &self,
             ctx: Context<State>,
             req: Request,
-        ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + '_ {
-            self.0
-                .serve(ctx, req)
-                .map_ok(|res| res.as_ref().to_uppercase())
+        ) -> Result<Self::Response, Self::Error> {
+            let res = self.0.serve(ctx, req).await;
+            res.map(|msg| msg.as_ref().to_uppercase())
         }
     }
 

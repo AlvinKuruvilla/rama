@@ -12,12 +12,15 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 
+# capability source:
+# > https://www.browserstack.com/docs/automate/capabilities
+
 desktop_permutations = [
     ["latest", "latest-1", "latest-2"],
     ["Chrome", "Edge", "Firefox", "Safari"],
     (
         [["Windows", v] for v in ["10", "11"]]
-        + [["OS X", v] for v in ["Monterey", "Ventura"]]
+        + [["OS X", v] for v in ["Monterey", "Ventura", "Sonoma"]]
     ),
 ]
 
@@ -78,7 +81,7 @@ def get_browser_option(browser):
     return switcher.get(browser, ChromeOptions())
 
 
-build_name = "rama-fp-0.2-alpha-{system}-{node}-{date}".format(
+build_name = "rama-fp-{system}-{node}-{date}".format(
     system=platform.system(),
     node=platform.node().replace("-", "_"),
     date=datetime.now().strftime("%Y_%m_%d_%H_%M_%S"),
@@ -136,7 +139,7 @@ def run_session(cap):
         bstack_options["os"] = cap["os"]
     if "deviceName" in cap:
         bstack_options["deviceName"] = cap["deviceName"]
-    bstack_options["source"] = "python:rama-fp:v0.2"
+    bstack_options["source"] = "python:rama-fp"
     options = get_browser_option(cap["browserName"].lower())
     if "browserVersion" in cap:
         options.browser_version = cap["browserVersion"]

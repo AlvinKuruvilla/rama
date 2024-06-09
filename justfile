@@ -30,7 +30,12 @@ hack:
 test:
 	cargo test --all-features --workspace
 
-qa: lint check clippy doc hack test
+test-ignored:
+	cargo test --all-features --workspace -- --ignored
+
+qa: lint check clippy doc test
+
+qa-full: lint check clippy doc hack test test-ignored fuzz-60s
 
 watch-docs:
 	cargo watch -x doc
@@ -71,3 +76,41 @@ report-code-lines:
 	find . -type f -name '*.rs' -exec cat {} + \
 		| grep -v target | tr -d ' ' | grep -v '^$' | grep -v '^//' \
 		| wc -l
+
+fuzz:
+	cargo +nightly fuzz run ua_parse -- -max_len=131072
+
+fuzz-60s:
+	cargo +nightly fuzz run ua_parse -- -max_len=131072 -max_total_time=60
+
+bench:
+	cargo bench
+
+vet:
+	cargo vet
+
+miri:
+	cargo +nightly miri test
+
+detect-unused-deps:
+	cargo machete --skip-target-dir
+
+detect-biggest-fn:
+	cargo bloat --package rama-cli --release -n 10
+
+detect-biggest-crates:
+	cargo bloat --package rama-cli --release --crates
+
+mdbook-serve:
+	cd docs/book && mdbook serve
+
+rama-cli-release-build TARGET:
+	cargo build -p rama-cli --bin rama --release --target {{TARGET}}
+	VERSION="$(cat Cargo.toml | grep -E '^version = "' | cut -d\" -f2)" && \
+		cd target/{{TARGET}}/release && \
+		tar -czf rama-cli-${VERSION}-{{TARGET}}.tar.gz rama && \
+		shasum -a 256 rama-cli-${VERSION}-{{TARGET}}.tar.gz > rama-cli-${VERSION}-{{TARGET}}.tar.gz.sha256
+
+rama-cli-release-build-all:
+	just rama-cli-release-build x86_64-apple-darwin
+	just rama-cli-release-build aarch64-apple-darwin

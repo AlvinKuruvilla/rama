@@ -1,9 +1,7 @@
-use std::{collections::HashMap, ops::Deref};
-
 use super::{
     data::{
-        get_http_info, get_request_info, get_tls_info, DataSource, FetchMode, Initiator,
-        RequestInfo, ResourceType, TlsInfo,
+        get_http_info, get_request_info, get_tls_info, get_user_agent_info, DataSource, FetchMode,
+        Initiator, RequestInfo, ResourceType, TlsInfo, UserAgentInfo,
     },
     State,
 };
@@ -18,6 +16,7 @@ use rama::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::ops::Deref;
 
 type Html = rama::http::response::Html<String>;
 
@@ -30,7 +29,7 @@ fn html<T: Into<String>>(inner: T) -> Html {
 //------------------------------------------
 
 pub async fn get_consent() -> impl IntoResponse {
-    ([("Set-Cookie", "rama-fp=0.2.0; Max-Age=60")], render_page(
+    ([("Set-Cookie", "rama-fp=ready; Max-Age=60")], render_page(
         "🕵️ Fingerprint Consent",
         String::new(),
         r##"<div class="consent">
@@ -82,6 +81,8 @@ pub async fn get_report(ctx: Context<State>, req: Request) -> Html {
 
     let (parts, _) = req.into_parts();
 
+    let user_agent_info = get_user_agent_info(&ctx).await;
+
     let request_info = get_request_info(
         FetchMode::Navigate,
         ResourceType::Document,
@@ -95,6 +96,7 @@ pub async fn get_report(ctx: Context<State>, req: Request) -> Html {
 
     let mut tables = vec![
         ctx.state().data_source.clone().into(),
+        user_agent_info.into(),
         request_info.into(),
         Table {
             title: "🚗 Http Headers".to_owned(),
@@ -150,6 +152,8 @@ pub async fn get_api_fetch_number(ctx: Context<State>, req: Request) -> Json<ser
 
     let (parts, _) = req.into_parts();
 
+    let user_agent_info = get_user_agent_info(&ctx).await;
+
     let request_info = get_request_info(
         FetchMode::SameOrigin,
         ResourceType::Xhr,
@@ -164,6 +168,7 @@ pub async fn get_api_fetch_number(ctx: Context<State>, req: Request) -> Json<ser
     Json(json!({
         "number": ctx.state().counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
         "fp": {
+            "user_agent_info": user_agent_info,
             "request_info": request_info,
             "tls_info": tls_info,
             "http_info": http_info,
@@ -184,6 +189,8 @@ pub async fn post_api_fetch_number(ctx: Context<State>, req: Request) -> Json<se
         }
     };
 
+    let user_agent_info = get_user_agent_info(&ctx).await;
+
     let request_info = get_request_info(
         FetchMode::SameOrigin,
         ResourceType::Xhr,
@@ -198,6 +205,7 @@ pub async fn post_api_fetch_number(ctx: Context<State>, req: Request) -> Json<se
     Json(json!({
         "number": number,
         "fp": {
+            "user_agent_info": user_agent_info,
             "request_info": request_info,
             "tls_info": tls_info,
             "http_info": http_info,
@@ -213,6 +221,8 @@ pub async fn get_api_xml_http_request_number(
 
     let (parts, _) = req.into_parts();
 
+    let user_agent_info = get_user_agent_info(&ctx).await;
+
     let request_info = get_request_info(
         FetchMode::SameOrigin,
         ResourceType::Xhr,
@@ -226,6 +236,7 @@ pub async fn get_api_xml_http_request_number(
         "number": ctx.state().counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
         "fp": {
             "headers": http_info.headers,
+            "user_agent_info": user_agent_info,
             "request_info": request_info,
         }
     }))
@@ -247,6 +258,8 @@ pub async fn post_api_xml_http_request_number(
         }
     };
 
+    let user_agent_info = get_user_agent_info(&ctx).await;
+
     let request_info = get_request_info(
         FetchMode::SameOrigin,
         ResourceType::Xhr,
@@ -261,6 +274,7 @@ pub async fn post_api_xml_http_request_number(
     Json(json!({
         "number": number,
         "fp": {
+            "user_agent_info": user_agent_info,
             "request_info": request_info,
             "tls_info": tls_info,
             "http_info": http_info,
@@ -279,6 +293,8 @@ pub async fn form(ctx: Context<State>, req: Request) -> Html {
     let http_info = get_http_info(&req);
 
     let (parts, _) = req.into_parts();
+
+    let user_agent_info = get_user_agent_info(&ctx).await;
 
     let request_info = get_request_info(
         FetchMode::SameOrigin,
@@ -310,6 +326,7 @@ pub async fn form(ctx: Context<State>, req: Request) -> Html {
 
     let mut tables = vec![
         ctx.state().data_source.clone().into(),
+        user_agent_info.into(),
         request_info.into(),
         Table {
             title: "🚗 Http Headers".to_owned(),
@@ -361,10 +378,7 @@ pub async fn get_assets_script() -> Response {
 pub async fn echo(ctx: Context<State>, req: Request) -> Json<serde_json::Value> {
     let http_info: super::data::HttpInfo = get_http_info(&req);
 
-    let query_params = req
-        .uri()
-        .query()
-        .and_then(|q| serde_urlencoded::from_str::<HashMap<String, String>>(q).ok());
+    let query = req.uri().query().map(str::to_owned);
 
     let (parts, body) = req.into_parts();
 
@@ -374,6 +388,8 @@ pub async fn echo(ctx: Context<State>, req: Request) -> Json<serde_json::Value> 
         "alpn": tls_info.alpn.map(|v| v.iter().map(|v| String::from_utf8_lossy(v).to_string()).collect::<Vec<_>>()),
         "cipher_suites": tls_info.cipher_suites,
     }));
+
+    let user_agent_info = get_user_agent_info(&ctx).await;
 
     let request_info = get_request_info(
         FetchMode::SameOrigin,
@@ -385,13 +401,15 @@ pub async fn echo(ctx: Context<State>, req: Request) -> Json<serde_json::Value> 
     .await;
 
     Json(json!({
+        "ua": user_agent_info,
         "version": request_info.version,
         "scheme": request_info.scheme,
         "method": request_info.method,
+        "authority": request_info.authority,
         "path": request_info.path,
+        "query": query,
         "ip": request_info.peer_addr,
         "headers": http_info.headers,
-        "parsedQueryParams": query_params,
         "parsedBody": String::from_utf8_lossy(body.collect().await.unwrap().to_bytes().deref()),
         "tls": tls_info,
     }))
@@ -505,21 +523,36 @@ impl From<TlsInfo> for Table {
     }
 }
 
+impl From<UserAgentInfo> for Table {
+    fn from(info: UserAgentInfo) -> Self {
+        Self {
+            title: "👤 User Agent Info".to_owned(),
+            rows: vec![
+                ("User Agent".to_owned(), info.user_agent),
+                ("Kind".to_owned(), info.kind.unwrap_or_default()),
+                (
+                    "Version".to_owned(),
+                    info.version.map(|v| v.to_string()).unwrap_or_default(),
+                ),
+                ("Platform".to_owned(), info.platform.unwrap_or_default()),
+            ],
+        }
+    }
+}
+
 impl From<RequestInfo> for Table {
     fn from(info: RequestInfo) -> Self {
         Self {
             title: "ℹ️ Request Info".to_owned(),
             rows: vec![
-                ("User Agent".to_owned(), info.user_agent.unwrap_or_default()),
                 ("Version".to_owned(), info.version),
-                ("Scheme".to_owned(), info.scheme),
-                ("Host".to_owned(), info.host.unwrap_or_default()),
                 ("Method".to_owned(), info.method),
+                ("Scheme".to_owned(), info.scheme),
+                ("Authority".to_owned(), info.authority.unwrap_or_default()),
+                ("Path".to_owned(), info.path),
                 ("Fetch Mode".to_owned(), info.fetch_mode.to_string()),
                 ("Resource Type".to_owned(), info.resource_type.to_string()),
                 ("Initiator".to_owned(), info.initiator.to_string()),
-                ("Path".to_owned(), info.path),
-                ("Uri".to_owned(), info.uri),
                 (
                     "Peer Address".to_owned(),
                     info.peer_addr.unwrap_or_default(),

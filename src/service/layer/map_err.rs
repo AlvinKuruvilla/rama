@@ -6,7 +6,7 @@ use std::fmt;
 /// This method can be used to change the [`Error`] type of the service
 /// into a different type. It is similar to the [`Result::map_err`] method.
 ///
-/// [`Error`]: crate::error::Error
+/// [`Error`]: crate::error::BoxError
 #[derive(Clone)]
 pub struct MapErr<S, F> {
     inner: S,
@@ -28,9 +28,17 @@ where
 /// A [`Layer`] that produces [`MapErr`] services.
 ///
 /// [`Layer`]: crate::service::Layer
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MapErrLayer<F> {
     f: F,
+}
+
+impl<F> std::fmt::Debug for MapErrLayer<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MapErrLayer")
+            .field("f", &format_args!("{}", std::any::type_name::<F>()))
+            .finish()
+    }
 }
 
 impl<S, F> MapErr<S, F> {

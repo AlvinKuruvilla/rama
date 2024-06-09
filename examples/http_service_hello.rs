@@ -5,15 +5,15 @@
 //! # Run the example
 //!
 //! ```sh
-//! cargo run --features=full --example http_service_hello
+//! cargo run --example http_service_hello
 //! ```
 //!
 //! # Expected output
 //!
-//! The server will start and listen on `:8080`. You can use `curl` to interact with the service:
+//! The server will start and listen on `:62010`. You can use `curl` to interact with the service:
 //!
 //! ```sh
-//! curl -v http://127.0.0.1:8080
+//! curl -v http://127.0.0.1:62010
 //! ```
 //!
 //! You should see a response with `HTTP/1.1 200 OK` and a HTML body containing
@@ -34,7 +34,6 @@ use rama::{
         server::HttpServer,
         IntoResponse, Request,
     },
-    latency::LatencyUnit,
     rt::Executor,
     service::{layer::TimeoutLayer, Context, ServiceBuilder},
     stream::{
@@ -42,6 +41,7 @@ use rama::{
         SocketInfo,
     },
     tcp::server::TcpListener,
+    utils::latency::LatencyUnit,
 };
 use std::{sync::Arc, time::Duration};
 use tracing::level_filters::LevelFilter;
@@ -58,7 +58,7 @@ async fn main() {
         )
         .init();
 
-    let graceful = rama::graceful::Shutdown::default();
+    let graceful = rama::utils::graceful::Shutdown::default();
 
     let sensitive_headers: Arc<[_]> = vec![header::AUTHORIZATION, header::COOKIE].into();
 
@@ -109,7 +109,7 @@ async fn main() {
 
         let tcp_http_service = HttpServer::auto(exec).service(http_service);
 
-        TcpListener::bind("127.0.0.1:8080")
+        TcpListener::bind("127.0.0.1:62010")
             .await
             .expect("bind TCP Listener")
             .serve_graceful(

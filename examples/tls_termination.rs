@@ -16,10 +16,11 @@
 //!
 //! # Expected output
 //!
-//! The server will start and listen on `:8443`. You can use `curl` to interact with the service:
+//! The server will start and listen on `:63800`. You can use `curl` to interact with the service:
 //!
 //! ```sh
-//! curl -k -v https://127.0.0.1:8443
+//! curl -v https://127.0.0.1:62800
+//! curl -k -v https://127.0.0.1:63800
 //! ```
 //!
 //! You should see a response with `HTTP/1.0 200 ok` and the body `Hello world!`.
@@ -32,10 +33,10 @@ use rama::tls::rustls::dep::{pki_types::PrivatePkcs8KeyDer, rustls::ServerConfig
 
 // rama provides everything out of the box to build a TLS termination proxy
 use rama::{
-    graceful::Shutdown,
     service::ServiceBuilder,
     tcp::{server::TcpListener, service::Forwarder},
     tls::rustls::server::{IncomingClientHello, TlsAcceptorLayer, TlsClientConfigHandler},
+    utils::graceful::Shutdown,
 };
 use rcgen::KeyPair;
 
@@ -79,7 +80,7 @@ async fn main() {
 
     // Create a server end entity cert issued by the CA.
     let server_key_pair = KeyPair::generate_for(alg).expect("generate server key pair");
-    let mut server_ee_params = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+    let mut server_ee_params = rcgen::CertificateParams::new(vec!["127.0.0.1".to_string()])
         .expect("create server ee params");
     server_ee_params.is_ca = rcgen::IsCa::NoCa;
     server_ee_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
@@ -115,9 +116,9 @@ async fn main() {
                 tls_server_config,
                 tls_client_config_handler,
             ))
-            .service(Forwarder::target("127.0.0.1:8080".parse().unwrap()));
+            .service(Forwarder::target("127.0.0.1:62800".parse().unwrap()));
 
-        TcpListener::bind("127.0.0.1:8443")
+        TcpListener::bind("127.0.0.1:63800")
             .await
             .expect("bind TCP Listener: tls")
             .serve_graceful(guard, tcp_service)
@@ -126,7 +127,7 @@ async fn main() {
 
     // create http server
     shutdown.spawn_task_fn(|guard| async {
-        TcpListener::bind("127.0.0.1:8080")
+        TcpListener::bind("127.0.0.1:62800")
             .await
             .expect("bind TCP Listener: http")
             .serve_fn_graceful(guard, |mut stream: TcpStream| async move {

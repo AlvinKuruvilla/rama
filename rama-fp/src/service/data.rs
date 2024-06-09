@@ -1,13 +1,10 @@
 use super::State;
 use rama::{
-    http::{
-        dep::http::request::Parts,
-        service::web::extract::{FromRequestParts, Host},
-        Request,
-    },
+    http::{dep::http::request::Parts, Request, RequestContext},
     service::Context,
     stream::SocketInfo,
     tls::rustls::server::IncomingClientHello,
+    ua::UserAgent,
 };
 use serde::Serialize;
 use std::str::FromStr;
@@ -99,18 +96,25 @@ pub struct DataSource {
 impl Default for DataSource {
     fn default() -> Self {
         Self {
-            name: "rama-fp".to_owned(),
-            version: "v0.2".to_owned(),
+            name: rama::utils::info::NAME.to_owned(),
+            version: rama::utils::info::VERSION.to_owned(),
         }
     }
 }
 
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct UserAgentInfo {
+    pub user_agent: String,
+    pub kind: Option<String>,
+    pub version: Option<usize>,
+    pub platform: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestInfo {
-    pub user_agent: Option<String>,
     pub version: String,
     pub scheme: String,
-    pub host: Option<String>,
+    pub authority: Option<String>,
     pub method: String,
     pub fetch_mode: FetchMode,
     pub resource_type: ResourceType,
@@ -120,6 +124,17 @@ pub struct RequestInfo {
     pub peer_addr: Option<String>,
 }
 
+pub async fn get_user_agent_info(ctx: &Context<State>) -> UserAgentInfo {
+    ctx.get()
+        .map(|ua: &UserAgent| UserAgentInfo {
+            user_agent: ua.header_str().to_owned(),
+            kind: ua.info().map(|info| info.kind.to_string()),
+            version: ua.info().and_then(|info| info.version),
+            platform: ua.platform().map(|v| v.to_string()),
+        })
+        .unwrap_or_default()
+}
+
 pub async fn get_request_info(
     fetch_mode: FetchMode,
     resource_type: ResourceType,
@@ -127,25 +142,11 @@ pub async fn get_request_info(
     ctx: &Context<State>,
     parts: &Parts,
 ) -> RequestInfo {
-    let host = Host::from_request_parts(ctx, parts)
-        .await
-        .ok()
-        .map(|h| h.0)
-        .or_else(|| parts.uri.host().map(|v| v.to_string()))
-        .map(|host| {
-            if !host.contains(':') && parts.uri.port_u16().is_some() {
-                format!("{}:{}", host, parts.uri.port_u16().unwrap())
-            } else {
-                host
-            }
-        });
+    let authority = ctx
+        .get::<RequestContext>()
+        .and_then(RequestContext::authority);
 
     RequestInfo {
-        user_agent: parts
-            .headers
-            .get("user-agent")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.to_owned()),
         version: format!("{:?}", parts.version),
         scheme: parts
             .uri
@@ -159,7 +160,7 @@ pub async fn get_request_info(
                 }
                 .to_owned()
             }),
-        host,
+        authority,
         method: parts.method.as_str().to_owned(),
         fetch_mode: parts
             .headers

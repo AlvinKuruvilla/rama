@@ -1,9 +1,5 @@
 //! TLS client support for Rama.
 
-mod service;
+mod http;
 #[doc(inline)]
-pub use service::{TlsConnectError, TlsConnectService};
-
-mod layer;
-#[doc(inline)]
-pub use layer::TlsConnectLayer;
+pub use http::{AutoTlsStream, HttpsConnector, HttpsConnectorLayer};

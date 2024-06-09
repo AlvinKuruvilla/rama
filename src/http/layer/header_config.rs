@@ -47,7 +47,7 @@ use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 
 use crate::{
-    error::Error,
+    error::BoxError,
     http::{
         utils::{HeaderValueErr, HeaderValueGetter},
         Request,
@@ -63,7 +63,7 @@ where
     G: HeaderValueGetter,
 {
     let value = request.header_str(header_name)?;
-    let config = serde_urlencoded::from_str::<T>(value)
+    let config = serde_html_form::from_str::<T>(value)
         .map_err(|_| HeaderValueErr::HeaderInvalid(header_name.as_str().to_owned()))?;
     Ok(config)
 }
@@ -126,10 +126,10 @@ where
     T: DeserializeOwned + Clone + Send + Sync + 'static,
     State: Send + Sync + 'static,
     Body: Send + Sync + 'static,
-    E: Into<Error> + Send + Sync + 'static,
+    E: Into<BoxError> + Send + Sync + 'static,
 {
     type Response = S::Response;
-    type Error = Error;
+    type Error = BoxError;
 
     async fn serve(
         &self,

@@ -3,6 +3,7 @@ name: CI
 env:
   CARGO_TERM_COLOR: always
   RUST_TOOLCHAIN: stable
+  RUST_TOOLCHAIN_NIGHTLY: nightly
   RUST_TOOLCHAIN_MSRV: 1.75.0
   RUST_TOOLCHAIN_BETA: beta
 
@@ -173,6 +174,78 @@ jobs:
       - name: Run tests
         run: cargo test --all-features --workspace
 
+  test-ignored-msrv:
+    needs: [check, check-msrv]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{env.RUST_TOOLCHAIN_MSRV}}
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --all-features --workspace -- --ignored
+
+  test-ignored-beta:
+    needs: [check, check-msrv]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{env.RUST_TOOLCHAIN_BETA}}
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --all-features --workspace -- --ignored
+
+  test-ignored:
+    needs: [check, check-msrv]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{env.RUST_TOOLCHAIN}}
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --all-features --workspace -- --ignored
+
+  test-ignored-macos-msrv:
+    needs: [check, check-msrv]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{env.RUST_TOOLCHAIN_MSRV}}
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --all-features --workspace -- --ignored
+
+  test-ignored-macos-beta:
+    needs: [check, check-msrv]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{env.RUST_TOOLCHAIN_MSRV}}
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --all-features --workspace -- --ignored
+
+  test-ignored-macos:
+    needs: [check, check-msrv]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{env.RUST_TOOLCHAIN}}
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --all-features --workspace -- --ignored
+
   test-docs:
     needs: [check, check-msrv]
     runs-on: ubuntu-latest
@@ -330,6 +403,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v1
 
+  cargo-fuzz:
+    needs: [check, check-msrv]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: ${{env.RUST_TOOLCHAIN_NIGHTLY}}
+      - name: Install cargo-fuzz
+        run: |
+          cargo install cargo-fuzz
+      - name: cargo fuzz check
+        run: |
+          cargo +nightly fuzz run ua_parse -- -max_len=131072 -max_total_time=30
+
   semver-checks:
     needs: [check, check-msrv]
     runs-on: ubuntu-latest
@@ -350,6 +438,9 @@ jobs:
       - test-beta
       - test-examples-msrv
       - test-examples-beta
+      - test-ignored
+      - test-ignored-msrv
+      - test-ignored-beta
       - test-docs
     if: github.ref == 'refs/heads/main'
     steps:
@@ -411,6 +502,9 @@ jobs:
       - test-beta
       - test-examples-msrv
       - test-examples-beta
+      - test-ignored
+      - test-ignored-msrv
+      - test-ignored-beta
       - test-docs
     if: github.ref == 'refs/heads/main'
     steps:

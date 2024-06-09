@@ -6,13 +6,16 @@ use crate::error::BoxError;
 use crate::service::{Context, Service};
 
 pub mod policy;
+use policy::UnlimitedPolicy;
 pub use policy::{Policy, PolicyOutput};
 
 mod layer;
 #[doc(inline)]
 pub use layer::LimitLayer;
 
-/// Limit requests based on a policy
+/// Limit requests based on a [`Policy`].
+///
+/// [`Policy`]: crate::service::layer::limit::Policy
 #[derive(Debug)]
 pub struct Limit<T, P> {
     inner: T,
@@ -20,10 +23,22 @@ pub struct Limit<T, P> {
 }
 
 impl<T, P> Limit<T, P> {
-    /// Creates a new [`Limit`] from a limit policy,
-    /// wrapping the given service.
+    /// Creates a new [`Limit`] from a limit [`Policy`],
+    /// wrapping the given [`Service`].
     pub fn new(inner: T, policy: P) -> Self {
         Limit { inner, policy }
+    }
+}
+
+impl<T> Limit<T, UnlimitedPolicy> {
+    /// Creates a new [`Limit`] with an unlimited policy.
+    ///
+    /// Meaning that all requests are allowed to proceed.
+    pub fn unlimited(inner: T) -> Self {
+        Limit {
+            inner,
+            policy: UnlimitedPolicy,
+        }
     }
 }
 
@@ -82,7 +97,7 @@ mod tests {
     use crate::service::{service_fn, Context, Layer, Service};
     use std::convert::Infallible;
 
-    use futures_util::future::join_all;
+    use futures_lite::future::zip;
 
     #[tokio::test]
     async fn test_limit() {
@@ -102,9 +117,7 @@ mod tests {
         let future_1 = service_1.serve(Context::default(), "Hello");
         let future_2 = service_2.serve(Context::default(), "Hello");
 
-        let mut results = join_all(vec![future_1, future_2]).await;
-        let result_1 = results.pop().unwrap();
-        let result_2 = results.pop().unwrap();
+        let (result_1, result_2) = zip(future_1, future_2).await;
 
         // check that one request succeeded and the other failed
         if result_1.is_err() {

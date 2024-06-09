@@ -11,16 +11,16 @@
 //!
 //! # Expected output
 //!
-//! The server will start and listen on `:8443`. You can use `curl` to interact with the service:
+//! The server will start and listen on `:63014`. You can use `curl` to interact with the service:
 //!
 //! ```sh
-//! curl -k -v https://127.0.0.1:8443
+//! curl -k -v https://127.0.0.1:63014
 //! ```
 //!
 //! This won't work as the client is not authorized. You can use `curl` to interact with the service:
 //!
 //! ```sh
-//! curl -v http://127.0.0.1:8080/hello
+//! curl -v http://127.0.0.1:62014/hello
 //! ```
 //!
 //! You should see a response with `HTTP/1.1 200 OK` and a body with `Hello, authorized client!`.
@@ -36,8 +36,7 @@ use rama::tls::rustls::dep::{
 
 // rama provides everything out of the box to build mtls web services and proxies
 use rama::{
-    error::Error,
-    graceful::Shutdown,
+    error::BoxError,
     http::{
         layer::trace::TraceLayer,
         response::{Html, Redirect},
@@ -48,6 +47,7 @@ use rama::{
     service::{Context, ServiceBuilder},
     tcp::server::TcpListener,
     tls::rustls::server::TlsAcceptorLayer,
+    utils::graceful::Shutdown,
 };
 use rcgen::KeyPair;
 
@@ -58,8 +58,8 @@ use tracing::metadata::LevelFilter;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 const SERVER_DOMAIN: &str = "127.0.0.1";
-const SERVER_ADDR: &str = "127.0.0.1:8443";
-const TUNNEL_ADDR: &str = "127.0.0.1:8080";
+const SERVER_ADDR: &str = "127.0.0.1:63014";
+const TUNNEL_ADDR: &str = "127.0.0.1:62014";
 
 #[derive(Debug)]
 struct TunnelState {
@@ -231,7 +231,7 @@ fn generate_tls_cert_server() -> (
 }
 
 /// L4 Proxy Service
-async fn serve_conn(ctx: Context<TunnelState>, mut source: TcpStream) -> Result<(), Error> {
+async fn serve_conn(ctx: Context<TunnelState>, mut source: TcpStream) -> Result<(), BoxError> {
     let state = ctx.state();
 
     let target = TcpStream::connect(SERVER_ADDR).await?;

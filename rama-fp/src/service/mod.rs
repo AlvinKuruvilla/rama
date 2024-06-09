@@ -1,29 +1,31 @@
 use base64::Engine as _;
 use rama::{
-    error::Error,
+    error::BoxError,
     http::{
         layer::{
             catch_panic::CatchPanicLayer, compression::CompressionLayer,
+            opentelemetry::RequestMetricsLayer, required_header::AddRequiredResponseHeadersLayer,
             set_header::SetResponseHeaderLayer, trace::TraceLayer,
         },
         matcher::HttpMatcher,
         response::Redirect,
         server::HttpServer,
-        service::web::match_service,
+        service::web::{match_service, PrometheusMetricsHandler},
         HeaderName, HeaderValue, IntoResponse,
     },
     proxy::pp::server::HaProxyLayer,
     rt::Executor,
     service::{
         layer::{
-            limit::policy::ConcurrentPolicy, HijackLayer, LimitLayer, MapErrLayer, TimeoutLayer,
+            limit::policy::ConcurrentPolicy, ConsumeErrLayer, HijackLayer, LimitLayer, TimeoutLayer,
         },
         service_fn,
-        util::{backoff::ExponentialBackoff, combinators::Either},
+        util::backoff::ExponentialBackoff,
         ServiceBuilder,
     },
-    stream::layer::http::BodyLimitLayer,
+    stream::layer::{http::BodyLimitLayer, opentelemetry::NetworkMetricsLayer},
     tcp::server::TcpListener,
+    telemetry::{opentelemetry, prometheus},
     tls::rustls::{
         dep::{
             pemfile,
@@ -31,6 +33,7 @@ use rama::{
         },
         server::{TlsAcceptorLayer, TlsClientConfigHandler},
     },
+    ua::UserAgentClassifierLayer,
 };
 use std::{convert::Infallible, io::BufReader, sync::Arc, time::Duration};
 use tracing::level_filters::LevelFilter;
@@ -53,11 +56,12 @@ pub struct Config {
     pub interface: String,
     pub port: u16,
     pub secure_port: u16,
+    pub prometheus_port: u16,
     pub http_version: String,
     pub ha_proxy: bool,
 }
 
-pub async fn run(cfg: Config) -> anyhow::Result<()> {
+pub async fn run(cfg: Config) -> Result<(), BoxError> {
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(
@@ -67,7 +71,24 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         )
         .init();
 
-    let graceful = rama::graceful::Shutdown::default();
+    // prometheus registry & exporter
+    let registry = prometheus::Registry::new();
+    let exporter = prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .unwrap();
+
+    // set up a meter meter to create instruments
+    let provider = opentelemetry::sdk::metrics::SdkMeterProvider::builder()
+        .with_reader(exporter)
+        .build();
+
+    opentelemetry::global::set_meter_provider(provider);
+
+    // prometheus metrics http handler (exporter)
+    let metrics_http_handler = Arc::new(PrometheusMetricsHandler::new().with_registry(registry));
+
+    let graceful = rama::utils::graceful::Shutdown::default();
 
     let acme_data = if let Ok(raw_acme_data) = std::env::var("RAMA_FP_ACME_DATA") {
         let acme_data: Vec<_> = raw_acme_data
@@ -86,6 +107,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
 
     let http_address = format!("{}:{}", cfg.interface, cfg.port);
     let https_address = format!("{}:{}", cfg.interface, cfg.secure_port);
+    let prometheus_address = format!("{}:{}", cfg.interface, cfg.prometheus_port);
 
     let ha_proxy = cfg.ha_proxy;
 
@@ -134,12 +156,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
 
         let http_service = ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
+            .layer(RequestMetricsLayer::default())
             .layer(CompressionLayer::new())
             .layer(CatchPanicLayer::new())
-            .layer(SetResponseHeaderLayer::overriding(
-                HeaderName::from_static("server"),
-                HeaderValue::from_static("rama-v0.2-alpha"),
-            ))
+            .layer(AddRequiredResponseHeadersLayer::default())
             .layer(SetResponseHeaderLayer::overriding(
                 HeaderName::from_static("x-sponsored-by"),
                 HeaderValue::from_static("fly.io"),
@@ -156,6 +176,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
                 HeaderName::from_static("vary"),
                 ch_headers,
             ))
+            .layer(UserAgentClassifierLayer::new())
             .service(
                 Arc::new(match_service!{
                     // Navigate
@@ -172,14 +193,9 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             );
 
         let tcp_service_builder = ServiceBuilder::new()
-            .map_result(|result| {
-                if let Err(err) = result {
-                    tracing::warn!(error = %err, "rama service failed");
-                }
-                Ok::<_, Infallible>(())
-            })
+            .layer(ConsumeErrLayer::trace(tracing::Level::WARN))
+            .layer(NetworkMetricsLayer::default())
             .layer(TimeoutLayer::new(Duration::from_secs(16)))
-            // Why the below layer makes it no longer cloneable?!?!
             .layer(LimitLayer::new(ConcurrentPolicy::max_with_backoff(
                 2048,
                 ExponentialBackoff::default(),
@@ -198,11 +214,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
 
             let http_service = http_service.clone();
 
-            let tcp_service_builder = if ha_proxy {
-                tcp_service_builder.clone().layer(Either::A(HaProxyLayer::default()))
-            } else {
-                tcp_service_builder.clone().layer(Either::B(MapErrLayer::new(Error::new)))
-            };
+            let tcp_service_builder = tcp_service_builder.clone()
+                .layer(ha_proxy.then(HaProxyLayer::default));
 
             // create tls service builder
             let server_config =
@@ -261,11 +274,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             });
         }
 
-        let tcp_service_builder = if ha_proxy {
-            tcp_service_builder.layer(Either::A(HaProxyLayer::default()))
-        } else {
-            tcp_service_builder.layer(Either::B(MapErrLayer::new(Error::new)))
-        };
+        let tcp_service_builder = tcp_service_builder
+        .layer(ha_proxy.then(HaProxyLayer::default));
 
         let tcp_listener = TcpListener::build_with_state(State::new(acme_data))
             .bind(&http_address)
@@ -310,6 +320,21 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         }
     });
 
+    graceful.spawn_task_fn(|guard| async move {
+        let exec = Executor::graceful(guard.clone());
+        HttpServer::auto(exec)
+            .listen_graceful(
+                guard,
+                prometheus_address,
+                match_service!{
+                    HttpMatcher::get("/metrics") => metrics_http_handler,
+                    _ => service_fn(|_| async { Ok::<_, Infallible>(Redirect::temporary("/metrics").into_response()) }),
+                },
+            )
+            .await
+            .unwrap();
+    });
+
     graceful
         .shutdown_with_limit(Duration::from_secs(30))
         .await?;
@@ -317,7 +342,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn echo(cfg: Config) -> anyhow::Result<()> {
+pub async fn echo(cfg: Config) -> Result<(), BoxError> {
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(
@@ -327,7 +352,24 @@ pub async fn echo(cfg: Config) -> anyhow::Result<()> {
         )
         .init();
 
-    let graceful = rama::graceful::Shutdown::default();
+    // prometheus registry & exporter
+    let registry = prometheus::Registry::new();
+    let exporter = prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .unwrap();
+
+    // set up a meter meter to create instruments
+    let provider = opentelemetry::sdk::metrics::SdkMeterProvider::builder()
+        .with_reader(exporter)
+        .build();
+
+    opentelemetry::global::set_meter_provider(provider);
+
+    // prometheus metrics http handler (exporter)
+    let metrics_http_handler = Arc::new(PrometheusMetricsHandler::new().with_registry(registry));
+
+    let graceful = rama::utils::graceful::Shutdown::default();
 
     let acme_data = if let Ok(raw_acme_data) = std::env::var("RAMA_FP_ACME_DATA") {
         let acme_data: Vec<_> = raw_acme_data
@@ -346,21 +388,21 @@ pub async fn echo(cfg: Config) -> anyhow::Result<()> {
 
     let http_address = format!("{}:{}", cfg.interface, cfg.port);
     let https_address = format!("{}:{}", cfg.interface, cfg.secure_port);
+    let prometheus_address = format!("{}:{}", cfg.interface, cfg.prometheus_port);
     let ha_proxy = cfg.ha_proxy;
 
     graceful.spawn_task_fn(move |guard| async move {
         let http_service = ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
+            .layer(RequestMetricsLayer::default())
             .layer(CompressionLayer::new())
             .layer(CatchPanicLayer::new())
-            .layer(SetResponseHeaderLayer::overriding(
-                HeaderName::from_static("server"),
-                HeaderValue::from_static("rama-v0.2-alpha"),
-            ))
+            .layer(AddRequiredResponseHeadersLayer::default())
             .layer(SetResponseHeaderLayer::overriding(
                 HeaderName::from_static("x-sponsored-by"),
                 HeaderValue::from_static("fly.io"),
             ))
+            .layer(UserAgentClassifierLayer::new())
             .service(
                 Arc::new(match_service!{
                     HttpMatcher::get("/.well-known/acme-challenge/:token") => endpoints::get_acme_challenge,
@@ -369,12 +411,8 @@ pub async fn echo(cfg: Config) -> anyhow::Result<()> {
             );
 
         let tcp_service_builder = ServiceBuilder::new()
-            .map_result(|result| {
-                if let Err(err) = result {
-                    tracing::warn!(error = %err, "rama service failed");
-                }
-                Ok::<_, Infallible>(())
-            })
+            .layer(ConsumeErrLayer::trace(tracing::Level::WARN))
+            .layer(NetworkMetricsLayer::default())
             .layer(TimeoutLayer::new(Duration::from_secs(16)))
             // Why the below layer makes it no longer cloneable?!?!
             .layer(LimitLayer::new(ConcurrentPolicy::max_with_backoff(
@@ -395,11 +433,8 @@ pub async fn echo(cfg: Config) -> anyhow::Result<()> {
 
             let http_service = http_service.clone();
 
-            let tcp_service_builder = if ha_proxy {
-                tcp_service_builder.clone().layer(Either::A(HaProxyLayer::default()))
-            } else {
-                tcp_service_builder.clone().layer(Either::B(MapErrLayer::new(Error::new)))
-            };
+            let tcp_service_builder = tcp_service_builder.clone()
+                .layer(ha_proxy.then(HaProxyLayer::default));
 
             // create tls service builder
             let server_config =
@@ -463,11 +498,8 @@ pub async fn echo(cfg: Config) -> anyhow::Result<()> {
             .await
             .expect("bind TCP Listener");
 
-        let tcp_service_builder = if ha_proxy {
-            tcp_service_builder.layer(Either::A(HaProxyLayer::default()))
-        } else {
-            tcp_service_builder.layer(Either::B(MapErrLayer::new(Error::new)))
-        };
+        let tcp_service_builder = tcp_service_builder
+            .layer(ha_proxy.then(HaProxyLayer::default));
 
         match cfg.http_version.as_str() {
             "" | "auto" => {
@@ -507,6 +539,21 @@ pub async fn echo(cfg: Config) -> anyhow::Result<()> {
         }
     });
 
+    graceful.spawn_task_fn(|guard| async move {
+        let exec = Executor::graceful(guard.clone());
+        HttpServer::auto(exec)
+            .listen_graceful(
+                guard,
+                prometheus_address,
+                match_service!{
+                    HttpMatcher::get("/metrics") => metrics_http_handler,
+                    _ => service_fn(|_| async { Ok::<_, Infallible>(Redirect::temporary("/metrics").into_response()) }),
+                },
+            )
+            .await
+            .unwrap();
+    });
+
     graceful
         .shutdown_with_limit(Duration::from_secs(30))
         .await?;
@@ -518,13 +565,13 @@ async fn get_server_config(
     tls_cert_pem_raw: String,
     tls_key_pem_raw: String,
     http_version: &str,
-) -> anyhow::Result<ServerConfig> {
+) -> Result<ServerConfig, BoxError> {
     // server TLS Certs
     let tls_cert_pem_raw = BASE64.decode(tls_cert_pem_raw.as_bytes())?;
     let mut pem = BufReader::new(&tls_cert_pem_raw[..]);
     let mut certs = Vec::new();
     for cert in pemfile::certs(&mut pem) {
-        certs.push(cert.expect("parse mTLS client cert"));
+        certs.push(cert.expect("parse tls server cert"));
     }
 
     // server TLS key

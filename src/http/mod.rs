@@ -8,6 +8,14 @@ mod body_limit;
 #[doc(inline)]
 pub use body_limit::BodyLimit;
 
+mod body_ext;
+#[doc(inline)]
+pub use body_ext::BodyExtractExt;
+
+mod request_context;
+#[doc(inline)]
+pub use request_context::RequestContext;
+
 pub mod utils;
 
 pub mod headers;
@@ -27,6 +35,8 @@ pub mod service;
 pub mod server;
 
 pub mod client;
+
+pub mod io;
 
 pub mod dep {
     //! Dependencies for rama http modules.
@@ -85,11 +95,42 @@ pub mod dep {
     }
 }
 
-pub use self::dep::http::header;
+pub mod header {
+    //! HTTP header types
+
+    pub use crate::http::dep::http::header::*;
+
+    macro_rules! static_header {
+        ($($name_bytes:literal),+ $(,)?) => {
+            $(
+                paste::paste! {
+                    #[doc = concat!("header name constant for `", $name_bytes, "`.")]
+                    pub static [<$name_bytes:snake:upper>]: super::HeaderName = super::HeaderName::from_static($name_bytes);
+                }
+            )+
+        };
+    }
+
+    static_header![
+        "x-forwarded-host",
+        "x-forwarded-for",
+        "keep-alive",
+        "proxy-connection",
+    ];
+
+    /// Static Header Value that is can be used as `User-Agent` or `Server` header.
+    pub static RAMA_ID_HEADER_VALUE: HeaderValue =
+        HeaderValue::from_static(const_format::formatcp!(
+            "{}/{}",
+            crate::utils::info::NAME,
+            crate::utils::info::VERSION,
+        ));
+}
+
 pub use self::dep::http::header::HeaderMap;
 pub use self::dep::http::header::HeaderName;
 pub use self::dep::http::header::HeaderValue;
 pub use self::dep::http::method::Method;
 pub use self::dep::http::status::StatusCode;
-pub use self::dep::http::uri::Uri;
+pub use self::dep::http::uri::{Scheme, Uri};
 pub use self::dep::http::version::Version;

@@ -8,15 +8,15 @@
 //! # Run the example
 //!
 //! ```sh
-//! cargo run --features=full --example http_web_service_dir_and_api
+//! cargo run --example http_web_service_dir_and_api
 //! ```
 //!
 //! # Expected output
 //!
-//! The server will start and listen on `:8080`. You can use your browser to interact with the service:
+//! The server will start and listen on `:62013`. You can use your browser to interact with the service:
 //!
 //! ```sh
-//! open http://localhost:8080
+//! open http://127.0.0.1:62013
 //! ```
 //!
 //! You should see a the homepage in your browser.
@@ -65,7 +65,7 @@ async fn main() {
         )
         .init();
 
-    let addr = "0.0.0.0:8080";
+    let addr = "0.0.0.0:62013";
     tracing::info!("running service at: {addr}");
     let exec = Executor::default();
     HttpServer::auto(exec)

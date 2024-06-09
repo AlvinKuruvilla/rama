@@ -9,7 +9,7 @@
 </div>
 
 There are currently
-[no examples found in the `./examples` dir](https://github.com/plabayo/rama/tree/main/examples)
+[no examples found in the `/examples` dir](https://github.com/plabayo/rama/tree/main/examples)
 on how to create such a proxy using rama. If you are interested in contributing this
 you can create an issue at <https://github.com/plabayo/rama/issues> and we'll
 help you to get this shipped.
@@ -30,7 +30,7 @@ digraph {
 
 </div>
 
-The HTTP/TLS content, version, config and flow can be adapted by the distortion proxy,
+The Http/Tls content, version, config and flow can be adapted by the distortion proxy,
 often in function of a specific web client it wishes to emulate. The IP Address can be changed
 by the use of an upstream proxy.
 
