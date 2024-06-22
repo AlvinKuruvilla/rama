@@ -1,13 +1,13 @@
-use crate::http::{RequestContext, Version};
-use base64::Engine;
+use crate::{
+    http::{RequestContext, Version},
+    utils::str::NonEmptyString,
+};
 use serde::Deserialize;
-use std::{future::Future, str::FromStr};
+use std::future::Future;
 use venndb::Any;
 
 mod internal;
-pub use internal::{
-    proxy_is_valid, Proxy, ProxyCsvRowReader, ProxyCsvRowReaderError, ProxyCsvRowReaderErrorKind,
-};
+pub use internal::{Proxy, ProxyCsvRowReader, ProxyCsvRowReaderError, ProxyCsvRowReaderErrorKind};
 
 pub mod layer;
 
@@ -15,116 +15,7 @@ mod str;
 #[doc(inline)]
 pub use str::StringFilter;
 
-const BASE64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// The credentials to use to authenticate with the proxy.
-pub enum ProxyCredentials {
-    /// Basic authentication
-    ///
-    /// See <https://datatracker.ietf.org/doc/html/rfc7617> for more information.
-    Basic {
-        /// The username to use to authenticate with the proxy.
-        username: String,
-        /// The optional password to use to authenticate with the proxy,
-        /// in combination with the username.
-        password: Option<String>,
-    },
-    /// Bearer token authentication, token content is opaque for the proxy facilities.
-    ///
-    /// See <https://datatracker.ietf.org/doc/html/rfc6750> for more information.
-    Bearer(String),
-}
-
-impl ProxyCredentials {
-    /// Get the username from the credentials, if any.
-    pub fn username(&self) -> Option<&str> {
-        match self {
-            ProxyCredentials::Basic { username, .. } => Some(username),
-            ProxyCredentials::Bearer(_) => None,
-        }
-    }
-
-    /// Get the password from the credentials, if any.
-    pub fn password(&self) -> Option<&str> {
-        match self {
-            ProxyCredentials::Basic { password, .. } => password.as_deref(),
-            ProxyCredentials::Bearer(_) => None,
-        }
-    }
-
-    /// Get the bearer token from the credentials, if any.
-    pub fn bearer(&self) -> Option<&str> {
-        match self {
-            ProxyCredentials::Bearer(token) => Some(token),
-            ProxyCredentials::Basic { .. } => None,
-        }
-    }
-}
-
-impl std::fmt::Display for ProxyCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProxyCredentials::Basic { username, password } => match password {
-                Some(password) => write!(
-                    f,
-                    "Basic {}",
-                    BASE64.encode(format!("{}:{}", username, password))
-                ),
-                None => write!(f, "Basic {}", BASE64.encode(username)),
-            },
-            ProxyCredentials::Bearer(token) => write!(f, "Bearer {}", token),
-        }
-    }
-}
-
-#[derive(Debug)]
-/// The error that can be returned when parsing a proxy credentials string.
-#[non_exhaustive]
-pub struct InvalidProxyCredentialsString;
-
-impl FromStr for ProxyCredentials {
-    type Err = InvalidProxyCredentialsString;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.splitn(2, ' ');
-
-        match parts.next() {
-            Some("Basic") => {
-                let encoded = parts.next().ok_or(InvalidProxyCredentialsString)?;
-                let decoded = BASE64
-                    .decode(encoded)
-                    .map_err(|_| InvalidProxyCredentialsString)?;
-                let decoded =
-                    String::from_utf8(decoded).map_err(|_| InvalidProxyCredentialsString)?;
-                let mut parts = decoded.splitn(2, ':');
-
-                let username = parts
-                    .next()
-                    .ok_or(InvalidProxyCredentialsString)?
-                    .to_owned();
-                let password = parts.next().map(str::to_owned);
-
-                Ok(ProxyCredentials::Basic { username, password })
-            }
-            Some("Bearer") => {
-                let token = parts.next().ok_or(InvalidProxyCredentialsString)?;
-                Ok(ProxyCredentials::Bearer(token.to_owned()))
-            }
-            _ => Err(InvalidProxyCredentialsString),
-        }
-    }
-}
-
-impl std::fmt::Display for InvalidProxyCredentialsString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Invalid proxy credentials string")
-    }
-}
-
-impl std::error::Error for InvalidProxyCredentialsString {}
-
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, Eq, Hash)]
 /// Filter to select a specific kind of proxy.
 ///
 /// If the `id` is specified the other fields are used
@@ -151,7 +42,7 @@ impl std::error::Error for InvalidProxyCredentialsString {}
 /// [`Extensions`]: crate::service::context::Extensions
 pub struct ProxyFilter {
     /// The ID of the proxy to select.
-    pub id: Option<String>,
+    pub id: Option<NonEmptyString>,
 
     /// The ID of the pool from which to select the proxy.
     #[serde(alias = "pool")]
@@ -383,6 +274,7 @@ impl ProxyDB for MemoryProxyDB {
 fn combine_proxy_filter(proxy: &Proxy, filter: ProxyFilter) -> Proxy {
     Proxy {
         id: proxy.id.clone(),
+        address: proxy.address.clone(),
         tcp: proxy.tcp,
         udp: proxy.udp,
         http: proxy.http,
@@ -390,12 +282,10 @@ fn combine_proxy_filter(proxy: &Proxy, filter: ProxyFilter) -> Proxy {
         datacenter: proxy.datacenter,
         residential: proxy.residential,
         mobile: proxy.mobile,
-        authority: proxy.authority.clone(),
         pool_id: use_preferred_string_filter(filter.pool_id, &proxy.pool_id),
         country: use_preferred_string_filter(filter.country, &proxy.country),
         city: use_preferred_string_filter(filter.city, &proxy.city),
         carrier: use_preferred_string_filter(filter.carrier, &proxy.carrier),
-        credentials: proxy.credentials.clone(),
     }
 }
 
@@ -451,7 +341,7 @@ impl std::fmt::Display for MemoryProxyDBInsertError {
 
 impl std::error::Error for MemoryProxyDBInsertError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// The kind of error that [`MemoryProxyDBInsertError`] represents.
 pub enum MemoryProxyDBInsertErrorKind {
     /// Duplicate key found in the proxies.
@@ -500,7 +390,7 @@ pub struct MemoryProxyDBQueryError {
     kind: MemoryProxyDBQueryErrorKind,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// The kind of error that [`MemoryProxyDBQueryError`] represents.
 pub enum MemoryProxyDBQueryErrorKind {
     /// No proxy match could be found.
@@ -546,52 +436,15 @@ impl MemoryProxyDBQueryError {
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools;
+    use std::str::FromStr;
+
+    use crate::{
+        net::{address::ProxyAddress, Protocol},
+        utils::str::NonEmptyString,
+    };
 
     use super::*;
-
-    #[test]
-    fn test_proxy_credentials_from_str_basic() {
-        let credentials: ProxyCredentials = "Basic dXNlcm5hbWU6cGFzc3dvcmQ=".parse().unwrap();
-        assert_eq!(credentials.username().unwrap(), "username");
-        assert_eq!(credentials.password().unwrap(), "password");
-    }
-
-    #[test]
-    fn test_proxy_credentials_from_str_bearer() {
-        let credentials: ProxyCredentials = "Bearer bar".parse().unwrap();
-        assert_eq!(credentials.bearer().unwrap(), "bar");
-    }
-
-    #[test]
-    fn test_proxy_credentials_from_str_invalid() {
-        let credentials: Result<ProxyCredentials, _> = "Invalid".parse();
-        assert!(credentials.is_err());
-    }
-
-    #[test]
-    fn test_proxy_credentials_display_basic() {
-        let credentials = ProxyCredentials::Basic {
-            username: "username".to_owned(),
-            password: Some("password".to_owned()),
-        };
-        assert_eq!(credentials.to_string(), "Basic dXNlcm5hbWU6cGFzc3dvcmQ=");
-    }
-
-    #[test]
-    fn test_proxy_credentials_display_basic_no_password() {
-        let credentials = ProxyCredentials::Basic {
-            username: "username".to_owned(),
-            password: None,
-        };
-        assert_eq!(credentials.to_string(), "Basic dXNlcm5hbWU=");
-    }
-
-    #[test]
-    fn test_proxy_credentials_display_bearer() {
-        let credentials = ProxyCredentials::Bearer("foo".to_owned());
-        assert_eq!(credentials.to_string(), "Bearer foo");
-    }
+    use itertools::Itertools;
 
     const RAW_CSV_DATA: &str = include_str!("./test_proxydb_rows.csv");
 
@@ -613,9 +466,8 @@ mod tests {
     fn h2_req_context() -> RequestContext {
         RequestContext {
             http_version: Version::HTTP_2,
-            scheme: crate::uri::Scheme::Https,
-            host: Some("example.com".to_owned()),
-            port: None,
+            protocol: Protocol::Https,
+            authority: Some("localhost:8443".try_into().unwrap()),
         }
     }
 
@@ -624,7 +476,7 @@ mod tests {
         let db = memproxydb().await;
         let ctx = h2_req_context();
         let filter = ProxyFilter {
-            id: Some("3031533634".to_owned()),
+            id: Some(NonEmptyString::from_static("3031533634")),
             ..Default::default()
         };
         let proxy = db.get_proxy(ctx, filter).await.unwrap();
@@ -636,7 +488,7 @@ mod tests {
         let db = memproxydb().await;
         let ctx = h2_req_context();
         let filter = ProxyFilter {
-            id: Some("3031533634".to_owned()),
+            id: Some(NonEmptyString::from_static("3031533634")),
             pool_id: Some(vec![StringFilter::new("poolF")]),
             country: Some(vec![StringFilter::new("JP")]),
             city: Some(vec![StringFilter::new("Yokohama")]),
@@ -654,7 +506,7 @@ mod tests {
         let db = memproxydb().await;
         let ctx = h2_req_context();
         let filter = ProxyFilter {
-            id: Some("notfound".to_owned()),
+            id: Some(NonEmptyString::from_static("notfound")),
             ..Default::default()
         };
         let err = db.get_proxy(ctx, filter).await.unwrap_err();
@@ -667,37 +519,37 @@ mod tests {
         let ctx = h2_req_context();
         let filters = [
             ProxyFilter {
-                id: Some("3031533634".to_owned()),
+                id: Some(NonEmptyString::from_static("3031533634")),
                 pool_id: Some(vec![StringFilter::new("poolB")]),
                 ..Default::default()
             },
             ProxyFilter {
-                id: Some("3031533634".to_owned()),
+                id: Some(NonEmptyString::from_static("3031533634")),
                 country: Some(vec![StringFilter::new("US")]),
                 ..Default::default()
             },
             ProxyFilter {
-                id: Some("3031533634".to_owned()),
+                id: Some(NonEmptyString::from_static("3031533634")),
                 city: Some(vec![StringFilter::new("New York")]),
                 ..Default::default()
             },
             ProxyFilter {
-                id: Some("3031533634".to_owned()),
+                id: Some(NonEmptyString::from_static("3031533634")),
                 datacenter: Some(false),
                 ..Default::default()
             },
             ProxyFilter {
-                id: Some("3031533634".to_owned()),
+                id: Some(NonEmptyString::from_static("3031533634")),
                 residential: Some(true),
                 ..Default::default()
             },
             ProxyFilter {
-                id: Some("3031533634".to_owned()),
+                id: Some(NonEmptyString::from_static("3031533634")),
                 mobile: Some(false),
                 ..Default::default()
             },
             ProxyFilter {
-                id: Some("3031533634".to_owned()),
+                id: Some(NonEmptyString::from_static("3031533634")),
                 carrier: Some(vec![StringFilter::new("AT&T")]),
                 ..Default::default()
             },
@@ -711,9 +563,8 @@ mod tests {
     fn h3_req_context() -> RequestContext {
         RequestContext {
             http_version: Version::HTTP_3,
-            scheme: crate::uri::Scheme::Https,
-            host: Some("example.com".to_owned()),
-            port: Some(8443),
+            protocol: Protocol::Https,
+            authority: Some("localhost:8443".try_into().unwrap()),
         }
     }
 
@@ -722,7 +573,7 @@ mod tests {
         let db = memproxydb().await;
         let ctx = h3_req_context();
         let filter = ProxyFilter {
-            id: Some("3031533634".to_owned()),
+            id: Some(NonEmptyString::from_static("3031533634")),
             ..Default::default()
         };
         // this proxy does not support socks5 UDP, which is what we need
@@ -901,7 +752,8 @@ mod tests {
     #[tokio::test]
     async fn test_db_proxy_filter_any_use_filter_property() {
         let db = MemoryProxyDB::try_from_iter([Proxy {
-            id: "1".to_owned(),
+            id: NonEmptyString::from_static("1"),
+            address: ProxyAddress::from_str("example.com").unwrap(),
             tcp: true,
             udp: true,
             http: true,
@@ -909,12 +761,10 @@ mod tests {
             datacenter: true,
             residential: true,
             mobile: true,
-            authority: "example.com".to_owned(),
             pool_id: Some("*".into()),
             country: Some("*".into()),
             city: Some("*".into()),
             carrier: Some("*".into()),
-            credentials: None,
         }])
         .unwrap();
 
@@ -922,7 +772,7 @@ mod tests {
 
         for filter in [
             ProxyFilter {
-                id: Some("1".to_owned()),
+                id: Some(NonEmptyString::from_static("1")),
                 ..Default::default()
             },
             ProxyFilter {
@@ -989,7 +839,8 @@ mod tests {
     #[tokio::test]
     async fn test_db_proxy_filter_any_only_matches_any_value() {
         let db = MemoryProxyDB::try_from_iter([Proxy {
-            id: "1".to_owned(),
+            id: NonEmptyString::from_static("1"),
+            address: ProxyAddress::from_str("example.com").unwrap(),
             tcp: true,
             udp: true,
             http: true,
@@ -997,12 +848,10 @@ mod tests {
             datacenter: true,
             residential: true,
             mobile: true,
-            authority: "example.com".to_owned(),
             pool_id: Some("hq".into()),
             country: Some("US".into()),
             city: Some("NY".into()),
             carrier: Some("AT&T".into()),
-            credentials: None,
         }])
         .unwrap();
 
@@ -1055,7 +904,8 @@ mod tests {
     async fn test_search_proxy_for_any_of_given_pools() {
         let db = MemoryProxyDB::try_from_iter([
             Proxy {
-                id: "1".to_owned(),
+                id: NonEmptyString::from_static("1"),
+                address: ProxyAddress::from_str("example.com").unwrap(),
                 tcp: true,
                 udp: true,
                 http: true,
@@ -1063,15 +913,14 @@ mod tests {
                 datacenter: true,
                 residential: true,
                 mobile: true,
-                authority: "example.com".to_owned(),
                 pool_id: Some("a".into()),
                 country: Some("US".into()),
                 city: Some("NY".into()),
                 carrier: Some("AT&T".into()),
-                credentials: None,
             },
             Proxy {
-                id: "2".to_owned(),
+                id: NonEmptyString::from_static("2"),
+                address: ProxyAddress::from_str("example.com").unwrap(),
                 tcp: true,
                 udp: true,
                 http: true,
@@ -1079,15 +928,14 @@ mod tests {
                 datacenter: true,
                 residential: true,
                 mobile: true,
-                authority: "example.com".to_owned(),
                 pool_id: Some("b".into()),
                 country: Some("US".into()),
                 city: Some("NY".into()),
                 carrier: Some("AT&T".into()),
-                credentials: None,
             },
             Proxy {
-                id: "3".to_owned(),
+                id: NonEmptyString::from_static("3"),
+                address: ProxyAddress::from_str("example.com").unwrap(),
                 tcp: true,
                 udp: true,
                 http: true,
@@ -1095,15 +943,14 @@ mod tests {
                 datacenter: true,
                 residential: true,
                 mobile: true,
-                authority: "example.com".to_owned(),
                 pool_id: Some("b".into()),
                 country: Some("US".into()),
                 city: Some("NY".into()),
                 carrier: Some("AT&T".into()),
-                credentials: None,
             },
             Proxy {
-                id: "4".to_owned(),
+                id: NonEmptyString::from_static("4"),
+                address: ProxyAddress::from_str("example.com").unwrap(),
                 tcp: true,
                 udp: true,
                 http: true,
@@ -1111,12 +958,10 @@ mod tests {
                 datacenter: true,
                 residential: true,
                 mobile: true,
-                authority: "example.com".to_owned(),
                 pool_id: Some("c".into()),
                 country: Some("US".into()),
                 city: Some("NY".into()),
                 carrier: Some("AT&T".into()),
-                credentials: None,
             },
         ])
         .unwrap();
@@ -1148,7 +993,7 @@ mod tests {
             (
                 "id=1",
                 ProxyFilter {
-                    id: Some("1".into()),
+                    id: Some(NonEmptyString::from_static("1")),
                     ..Default::default()
                 },
             ),

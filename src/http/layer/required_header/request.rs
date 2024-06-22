@@ -3,13 +3,13 @@
 //! For now this only sets `Host` header on http/1.1,
 //! as well as always a User-Agent for all versions.
 
-use http::header::{HOST, USER_AGENT};
-
 use crate::http::{
     header::{self, RAMA_ID_HEADER_VALUE},
     Request, RequestContext, Response,
 };
 use crate::service::{Context, Layer, Service};
+use headers::HeaderMapExt;
+use http::header::{HOST, USER_AGENT};
 use std::fmt;
 
 /// Layer that applies [`AddRequiredRequestHeaders`] which adds a request header.
@@ -102,13 +102,17 @@ where
         mut req: Request<ReqBody>,
     ) -> Result<Self::Response, Self::Error> {
         if self.overwrite || !req.headers().contains_key(HOST) {
-            if let Some(host) = ctx
-                .get_or_insert_with(|| RequestContext::from(&req))
-                .host
-                .as_deref()
-                .and_then(|host| host.parse().ok())
+            let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
+            if let Some(host) = request_ctx
+                .authority
+                .as_ref()
+                .and_then(|authority| {
+                    crate::http::dep::http::uri::Authority::from_maybe_shared(authority.to_string())
+                        .ok()
+                })
+                .map(crate::http::headers::Host::from)
             {
-                req.headers_mut().insert(HOST, host);
+                req.headers_mut().typed_insert(host);
             };
         }
 
@@ -155,7 +159,7 @@ mod test {
         let svc = ServiceBuilder::new()
             .layer(AddRequiredRequestHeadersLayer::new().overwrite(true))
             .service_fn(|_ctx: Context<()>, req: Request| async move {
-                assert_eq!(req.headers().get(HOST).unwrap(), "example.com");
+                assert_eq!(req.headers().get(HOST).unwrap(), "example.com:80");
                 assert_eq!(
                     req.headers().get(USER_AGENT).unwrap(),
                     RAMA_ID_HEADER_VALUE.to_str().unwrap()

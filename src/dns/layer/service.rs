@@ -5,8 +5,8 @@ use crate::{
         utils::{HeaderValueErr, HeaderValueGetter},
         HeaderName, Request, RequestContext,
     },
+    net::{address::Authority, stream::ServerSocketAddr},
     service::{Context, Service},
-    stream::ServerSocketAddr,
 };
 use std::net::SocketAddr;
 
@@ -48,6 +48,8 @@ impl<S, R> DnsService<S, R> {
             dns_map_header,
         }
     }
+
+    define_inner_service_accessors!();
 }
 
 impl<State, Body, E, S, R> Service<State, Request<Body>> for DnsService<S, R>
@@ -66,12 +68,10 @@ where
         mut ctx: Context<State>,
         request: Request<Body>,
     ) -> Result<Self::Response, Self::Error> {
-        let host = ctx
-            .get_or_insert_with::<RequestContext>(|| RequestContext::from(&request))
-            .host
-            .clone();
+        let request_ctx: &RequestContext = ctx.get_or_insert_from(&request);
+        let authority = request_ctx.authority.clone();
 
-        if let Some(addresses) = self.lookup_host(&request, host).await? {
+        if let Some(addresses) = self.lookup_authority(&request, authority).await? {
             let mut addresses_it = addresses.into_iter();
             match addresses_it.next() {
                 Some(address) => {
@@ -93,25 +93,25 @@ impl<S, R> DnsService<S, R>
 where
     R: DynamicDnsResolver,
 {
-    async fn lookup_host<Body, E>(
+    async fn lookup_authority<Body, E>(
         &self,
         request: &Request<Body>,
-        maybe_host: Option<String>,
+        maybe_authority: Option<Authority>,
     ) -> Result<Option<Vec<SocketAddr>>, DnsError<E>> {
         // opt-in callee-defined dns map, only if allowed by the service
         if let Some(dns_map_header) = &self.dns_map_header {
             match extract_header_config::<_, DnsMap, _>(request, dns_map_header) {
                 Err(HeaderValueErr::HeaderInvalid(_)) => {
-                    return Err(DnsError::MappingNotFound(maybe_host.unwrap_or_default()));
+                    return Err(DnsError::MappingNotFound(maybe_authority));
                 }
                 Err(HeaderValueErr::HeaderMissing(_)) => (), // ignore if missing, it's opt-in
                 Ok(dns_map) => {
-                    return match maybe_host {
+                    return match maybe_authority {
                         None => Err(DnsError::HostnameNotFound),
-                        Some(host) => {
+                        Some(authority) => {
                             let addr = dns_map
-                                .lookup_host(&host)
-                                .ok_or_else(|| DnsError::MappingNotFound(host))?;
+                                .lookup_authority(&authority)
+                                .ok_or_else(|| DnsError::MappingNotFound(Some(authority)))?;
                             Ok(Some(vec![addr]))
                         }
                     };
@@ -134,9 +134,9 @@ where
             }
         }
 
-        let host = maybe_host.ok_or_else(|| DnsError::HostnameNotFound)?;
+        let authority = maybe_authority.ok_or_else(|| DnsError::HostnameNotFound)?;
         Ok(Some(
-            self.resolver.lookup_host(host.to_string()).await?.collect(),
+            self.resolver.lookup_authority(authority).await?.collect(),
         ))
     }
 }

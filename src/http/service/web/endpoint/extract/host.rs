@@ -1,7 +1,7 @@
-use std::ops::Deref;
-
 use super::FromRequestParts;
-use crate::http::{dep::http::request::Parts, headers::extract::extract_host_from_headers};
+use crate::http::dep::http::request::Parts;
+use crate::http::RequestContext;
+use crate::net::address;
 use crate::service::Context;
 
 /// Extractor that resolves the hostname of the request.
@@ -12,10 +12,14 @@ use crate::service::Context;
 /// - `Host` header
 /// - request target / URI
 ///
+/// TODO: update the above once we have forwarded better implemented!
+///
 /// Note that user agents can set `X-Forwarded-Host` and `Host` headers to arbitrary values so make
 /// sure to validate them to avoid security issues.
 #[derive(Debug, Clone)]
-pub struct Host(pub String);
+pub struct Host(pub address::Host);
+
+impl_deref!(Host: address::Host);
 
 crate::__define_http_rejection! {
     #[status = BAD_REQUEST]
@@ -31,24 +35,17 @@ where
 {
     type Rejection = MissingHost;
 
-    async fn from_request_parts(_ctx: &Context<S>, parts: &Parts) -> Result<Self, Self::Rejection> {
-        if let Some(host) = extract_host_from_headers(&parts.headers) {
-            return Ok(Host(host));
-        }
-
-        if let Some(host) = parts.uri.host() {
-            return Ok(Host(host.to_owned()));
-        }
-
-        Err(MissingHost)
-    }
-}
-
-impl Deref for Host {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    async fn from_request_parts(ctx: &Context<S>, parts: &Parts) -> Result<Self, Self::Rejection> {
+        Ok(Host(
+            ctx.get::<RequestContext>()
+                .map(|ctx| ctx.authority.as_ref().map(|auth| auth.host().clone()))
+                .unwrap_or_else(|| {
+                    RequestContext::from(parts)
+                        .authority
+                        .map(|auth| auth.host().clone())
+                })
+                .ok_or(MissingHost)?,
+        ))
     }
 }
 
@@ -64,7 +61,8 @@ mod tests {
     use crate::service::Service;
 
     async fn test_host_from_request(host: &str, headers: Vec<(&HeaderName, &str)>) {
-        let svc = WebService::default().get("/", |Host(host): Host| async move { host });
+        let svc =
+            WebService::default().get("/", |Host(host): Host| async move { host.to_string() });
 
         let mut builder = Request::builder().method("GET").uri("http://example.com/");
         for (header, value) in headers {
@@ -81,7 +79,7 @@ mod tests {
     #[tokio::test]
     async fn host_header() {
         test_host_from_request(
-            "some-domain:123",
+            "some-domain",
             vec![(&http::header::HOST, "some-domain:123")],
         )
         .await;
@@ -89,17 +87,13 @@ mod tests {
 
     #[tokio::test]
     async fn x_forwarded_host_header() {
-        test_host_from_request(
-            "some-domain:456",
-            vec![(&X_FORWARDED_HOST, "some-domain:456")],
-        )
-        .await;
+        test_host_from_request("some-domain", vec![(&X_FORWARDED_HOST, "some-domain:456")]).await;
     }
 
     #[tokio::test]
     async fn x_forwarded_host_precedence_over_host_header() {
         test_host_from_request(
-            "some-domain:456",
+            "some-domain",
             vec![
                 (&X_FORWARDED_HOST, "some-domain:456"),
                 (&http::header::HOST, "some-domain:123"),

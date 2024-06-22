@@ -1,6 +1,6 @@
 use crate::{
+    net::stream::Stream,
     service::{Context, Service},
-    stream::Stream,
     tls::rustls::dep::tokio_rustls::{server::TlsStream, TlsAcceptor},
     tls::rustls::dep::{rustls::server::Acceptor, tokio_rustls::LazyConfigAcceptor},
 };
@@ -26,6 +26,8 @@ impl<S, H> TlsAcceptorService<S, H> {
             inner,
         }
     }
+
+    define_inner_service_accessors!();
 }
 
 impl<S, H> std::fmt::Debug for TlsAcceptorService<S, H> {

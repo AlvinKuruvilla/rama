@@ -14,12 +14,12 @@ use rama::{
         server::HttpServer,
         Body, IntoResponse, Request, RequestContext, Response, StatusCode,
     },
+    net::stream::layer::http::BodyLimitLayer,
     rt::Executor,
     service::{
         layer::{limit::policy::ConcurrentPolicy, LimitLayer, TimeoutLayer},
         service_fn, Context, Service, ServiceBuilder,
     },
-    stream::layer::http::BodyLimitLayer,
     tcp::{server::TcpListener, utils::is_connection_error},
 };
 use std::{convert::Infallible, time::Duration};
@@ -113,12 +113,9 @@ async fn http_connect_accept<S>(
 where
     S: Send + Sync + 'static,
 {
-    match ctx
-        .get_or_insert_with::<RequestContext>(|| RequestContext::from(&req))
-        .host
-        .as_ref()
-    {
-        Some(host) => tracing::info!("accept CONNECT to {host}"),
+    let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
+    match &request_ctx.authority {
+        Some(authority) => tracing::info!("accept CONNECT to {authority}"),
         None => {
             tracing::error!("error extracting host");
             return Err(StatusCode::BAD_REQUEST.into_response());
@@ -132,15 +129,15 @@ async fn http_connect_proxy<S>(ctx: Context<S>, mut upgraded: Upgraded) -> Resul
 where
     S: Send + Sync + 'static,
 {
-    let host = ctx
+    let authority = ctx // assumption validated by `http_connect_accept`
         .get::<RequestContext>()
         .unwrap()
-        .host
+        .authority
         .as_ref()
         .unwrap()
-        .clone();
-    tracing::info!("CONNECT to {}", host);
-    let mut stream = match tokio::net::TcpStream::connect(&host).await {
+        .to_string();
+    tracing::info!("CONNECT to {}", authority);
+    let mut stream = match tokio::net::TcpStream::connect(authority).await {
         Ok(stream) => stream,
         Err(err) => {
             tracing::error!(error = %err, "error connecting to host");

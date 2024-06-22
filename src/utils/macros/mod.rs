@@ -1,6 +1,8 @@
 //! Internal macros
 
+pub(crate) mod error;
 pub(crate) mod http_error;
+pub(crate) mod str;
 
 #[allow(unused_macros)]
 macro_rules! opaque_body {
@@ -99,21 +101,21 @@ macro_rules! match_ignore_ascii_case_str {
     };
 }
 
-// macro_rules! lazy_static {
-//     ($(static $name:ident: $ty:ty = $init:expr;)*) => {
-//         $(
-//             fn $name() -> &$ty {
-//                 static value: OnceLock<$ty> = OnceLock::new();
-//                 value.get_or_init(|| $init)
-//             }
-//         )*
-//     };
-// }
+macro_rules! define_inner_service_accessors {
+    () => {
+        /// Gets a reference to the underlying service.
+        pub fn get_ref(&self) -> &S {
+            &self.inner
+        }
 
-/// Private API.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __impl_deref {
+        /// Consumes `self`, returning the underlying service.
+        pub fn into_inner(self) -> S {
+            self.inner
+        }
+    };
+}
+
+macro_rules! impl_deref {
     ($ident:ident) => {
         impl<T> std::ops::Deref for $ident<T> {
             type Target = T;
@@ -147,20 +149,6 @@ macro_rules! __impl_deref {
             fn deref_mut(&mut self) -> &mut Self::Target {
                 &mut self.0
             }
-        }
-    };
-}
-
-macro_rules! define_inner_service_accessors {
-    () => {
-        /// Gets a reference to the underlying service.
-        pub fn get_ref(&self) -> &S {
-            &self.inner
-        }
-
-        /// Consumes `self`, returning the underlying service.
-        pub fn into_inner(self) -> S {
-            self.inner
         }
     };
 }

@@ -10,13 +10,13 @@ use rama::{
         server::HttpServer,
         IntoResponse, Request, RequestContext, Response,
     },
+    net::stream::{layer::http::BodyLimitLayer, SocketInfo},
     proxy::pp::server::HaProxyLayer,
     rt::Executor,
     service::{
         layer::{limit::policy::ConcurrentPolicy, LimitLayer, TimeoutLayer},
         Context, ServiceBuilder,
     },
-    stream::{layer::http::BodyLimitLayer, SocketInfo},
     tcp::server::TcpListener,
     tls::rustls::server::IncomingClientHello,
     ua::{UserAgent, UserAgentClassifierLayer},
@@ -120,9 +120,13 @@ async fn echo<State>(ctx: Context<State>, req: Request) -> Result<Response, Infa
         })
         .unwrap_or_default();
 
-    let authority = ctx
-        .get::<RequestContext>()
-        .and_then(RequestContext::authority);
+    let request_context = ctx.get::<RequestContext>();
+    let authority = request_context
+        .and_then(|ctx| ctx.authority.as_ref())
+        .map(|a| a.to_string());
+    let scheme = request_context
+        .map(|ctx| ctx.protocol.to_string())
+        .unwrap_or_default();
 
     // TODO: get in correct order
     // TODO: get in correct case
@@ -165,17 +169,7 @@ async fn echo<State>(ctx: Context<State>, req: Request) -> Result<Response, Infa
         "ua": user_agent_info,
         "http": {
             "version": format!("{:?}", parts.version),
-            "scheme": parts.uri
-            .scheme_str()
-            .map(|v| v.to_owned())
-            .unwrap_or_else(|| {
-                if ctx.get::<IncomingClientHello>().is_some() {
-                    "https"
-                } else {
-                    "http"
-                }
-                .to_owned()
-            }),
+            "scheme": scheme,
             "method": format!("{:?}", parts.method),
             "authority": authority,
             "path": parts.uri.path().to_owned(),

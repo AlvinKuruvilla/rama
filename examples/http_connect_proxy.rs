@@ -71,11 +71,11 @@ use rama::{
         service::web::{extract::Path, match_service},
         Body, IntoResponse, Request, RequestContext, Response, StatusCode,
     },
+    net::{stream::layer::http::BodyLimitLayer, user::Basic},
     rt::Executor,
     service::{
         context::Extensions, layer::HijackLayer, service_fn, Context, Service, ServiceBuilder,
     },
-    stream::layer::http::BodyLimitLayer,
     tcp::{server::TcpListener, utils::is_connection_error},
     utils::username::{
         UsernameLabelParser, UsernameLabelState, UsernameLabels, UsernameOpaqueLabelParser,
@@ -116,7 +116,7 @@ async fn main() {
                     .layer(TraceLayer::new_for_http())
                     // See [`ProxyAuthLayer::with_labels`] for more information,
                     // e.g. can also be used to extract upstream proxy filters
-                    .layer(ProxyAuthLayer::basic(("john", "secret")).with_labels::<(PriorityUsernameLabelParser, UsernameOpaqueLabelParser)>())
+                    .layer(ProxyAuthLayer::new(Basic::new("john", "secret")).with_labels::<(PriorityUsernameLabelParser, UsernameOpaqueLabelParser)>())
                     // example of how one might insert an API layer into their proxy
                     .layer(HijackLayer::new(
                         DomainMatcher::new("echo.example.internal"),
@@ -170,12 +170,9 @@ async fn http_connect_accept<S>(
 where
     S: Send + Sync + 'static,
 {
-    match ctx
-        .get_or_insert_with::<RequestContext>(|| RequestContext::from(&req))
-        .host
-        .as_ref()
-    {
-        Some(host) => tracing::info!("accept CONNECT to {host}"),
+    let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
+    match &request_ctx.authority {
+        Some(authority) => tracing::info!("accept CONNECT to {authority}"),
         None => {
             tracing::error!("error extracting host");
             return Err(StatusCode::BAD_REQUEST.into_response());
@@ -189,15 +186,15 @@ async fn http_connect_proxy<S>(ctx: Context<S>, mut upgraded: Upgraded) -> Resul
 where
     S: Send + Sync + 'static,
 {
-    let host = ctx
+    let authority = ctx // assumption validated by `http_connect_accept`
         .get::<RequestContext>()
         .unwrap()
-        .host
+        .authority
         .as_ref()
         .unwrap()
-        .clone();
-    tracing::info!("CONNECT to {}", host);
-    let mut stream = match tokio::net::TcpStream::connect(&host).await {
+        .to_string();
+    tracing::info!("CONNECT to {}", authority);
+    let mut stream = match tokio::net::TcpStream::connect(authority).await {
         Ok(stream) => stream,
         Err(err) => {
             tracing::error!(error = %err, "error connecting to host");
@@ -229,7 +226,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Priority {
     High,
     Medium,

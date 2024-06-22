@@ -21,6 +21,7 @@
 //!         ProxyFilter,
 //!    },
 //!    service::{Context, ServiceBuilder, Service, Layer},
+//!    utils::str::NonEmptyString,
 //! };
 //! use itertools::Itertools;
 //! use std::{convert::Infallible, sync::Arc};
@@ -29,7 +30,8 @@
 //! async fn main() {
 //!     let db = MemoryProxyDB::try_from_iter([
 //!         Proxy {
-//!             id: "42".to_owned(),
+//!             id: NonEmptyString::from_static("42"),
+//!             address: "12.34.12.34:8080".try_into().unwrap(),
 //!             tcp: true,
 //!             udp: true,
 //!             http: true,
@@ -37,15 +39,14 @@
 //!             datacenter: false,
 //!             residential: true,
 //!             mobile: true,
-//!             authority: "12.34.12.34:8080".to_owned(),
 //!             pool_id: None,
 //!             country: Some("*".into()),
 //!             city: Some("*".into()),
 //!             carrier: Some("*".into()),
-//!             credentials: None,
 //!         },
 //!         Proxy {
-//!             id: "100".to_owned(),
+//!             id: NonEmptyString::from_static("100"),
+//!             address: "123.123.123.123:8080".try_into().unwrap(),
 //!             tcp: true,
 //!             udp: false,
 //!             http: true,
@@ -53,22 +54,20 @@
 //!             datacenter: true,
 //!             residential: false,
 //!             mobile: false,
-//!             authority: "123.123.123.123:8080".to_owned(),
 //!             pool_id: None,
 //!             country: Some("US".into()),
 //!             city: None,
 //!             carrier: None,
-//!             credentials: None,
 //!         },
 //!     ])
 //!     .unwrap();
-//!     
+//!
 //!     let service = ServiceBuilder::new()
 //!         .layer(ProxyDBLayer::new(Arc::new(db), ProxySelectMode::Default))
 //!         .service_fn(|ctx: Context<()>, _: Request| async move {
 //!             Ok::<_, Infallible>(ctx.get::<Proxy>().unwrap().clone())
 //!         });
-//!     
+//!
 //!     let mut ctx = Context::default();
 //!     ctx.insert(ProxyFilter {
 //!         country: Some(vec!["BE".into()]),
@@ -76,14 +75,14 @@
 //!         residential: Some(true),
 //!         ..Default::default()
 //!     });
-//!     
+//!
 //!     let req = Request::builder()
 //!         .version(Version::HTTP_3)
 //!         .method("GET")
 //!         .uri("https://example.com")
 //!         .body(Body::empty())
 //!         .unwrap();
-//!     
+//!
 //!     let proxy = service.serve(ctx, req).await.unwrap();
 //!     assert_eq!(proxy.id, "42");
 //! }
@@ -217,6 +216,8 @@ impl<S, D> ProxyDBService<S, D> {
             predicate: (),
         }
     }
+
+    define_inner_service_accessors!();
 }
 
 impl<S, D, P> ProxyDBService<S, D, P> {
@@ -268,7 +269,7 @@ where
         };
 
         if let Some(filter) = maybe_filter {
-            let req_ctx = ctx.get_or_insert_with(|| RequestContext::from(&req));
+            let req_ctx: &RequestContext = ctx.get_or_insert_from(&req);
             let proxy = self
                 .db
                 .get_proxy(req_ctx.clone(), filter)
@@ -316,7 +317,7 @@ where
         };
 
         if let Some(filter) = maybe_filter {
-            let req_ctx = ctx.get_or_insert_with(|| RequestContext::from(&req));
+            let req_ctx: &RequestContext = ctx.get_or_insert_from(&req);
             let proxy = self
                 .db
                 .get_proxy_if(req_ctx.clone(), filter, self.predicate.clone())
@@ -407,17 +408,20 @@ mod tests {
     use super::*;
     use crate::{
         http::{Body, Version},
+        net::address::ProxyAddress,
         proxy::{MemoryProxyDB, MemoryProxyDBQueryError, ProxyCsvRowReader, StringFilter},
         service::ServiceBuilder,
+        utils::str::NonEmptyString,
     };
     use itertools::Itertools;
-    use std::{convert::Infallible, sync::Arc};
+    use std::{convert::Infallible, str::FromStr, sync::Arc};
 
     #[tokio::test]
     async fn test_proxy_db_default_happy_path_example() {
         let db = MemoryProxyDB::try_from_iter([
             Proxy {
-                id: "42".to_owned(),
+                id: NonEmptyString::from_static("42"),
+                address: ProxyAddress::from_str("12.34.12.34:8080").unwrap(),
                 tcp: true,
                 udp: true,
                 http: true,
@@ -425,15 +429,14 @@ mod tests {
                 datacenter: false,
                 residential: true,
                 mobile: true,
-                authority: "12.34.12.34:8080".to_owned(),
                 pool_id: None,
                 country: Some("*".into()),
                 city: Some("*".into()),
                 carrier: Some("*".into()),
-                credentials: None,
             },
             Proxy {
-                id: "100".to_owned(),
+                id: NonEmptyString::from_static("100"),
+                address: ProxyAddress::from_str("12.34.12.34:8080").unwrap(),
                 tcp: true,
                 udp: false,
                 http: true,
@@ -441,12 +444,10 @@ mod tests {
                 datacenter: true,
                 residential: false,
                 mobile: false,
-                authority: "123.123.123.123:8080".to_owned(),
                 pool_id: None,
                 country: Some("US".into()),
                 city: None,
                 carrier: None,
-                credentials: None,
             },
         ])
         .unwrap();
@@ -510,10 +511,10 @@ mod tests {
             ),
             (
                 Some(ProxyFilter {
-                    id: Some("3031533634".to_owned()),
+                    id: Some(NonEmptyString::from_static("3031533634")),
                     ..Default::default()
                 }),
-                Some("3031533634".to_owned()),
+                Some(NonEmptyString::from_static("3031533634")),
                 Request::builder()
                     .version(Version::HTTP_11)
                     .method("GET")
@@ -528,7 +529,7 @@ mod tests {
                     residential: Some(true),
                     ..Default::default()
                 }),
-                Some("2593294918".to_owned()),
+                Some(NonEmptyString::from_static("2593294918")),
                 Request::builder()
                     .version(Version::HTTP_3)
                     .method("GET")
@@ -544,10 +545,7 @@ mod tests {
 
             let maybe_proxy = service.serve(ctx, req).await.unwrap();
 
-            assert_eq!(
-                maybe_proxy.map(|p| p.id).unwrap_or_default(),
-                expected_id.unwrap_or_default()
-            );
+            assert_eq!(maybe_proxy.map(|p| p.id), expected_id);
         }
     }
 
@@ -594,7 +592,7 @@ mod tests {
                 }
             }
 
-            let seen_ids = seen_ids.into_iter().sorted().join(",");
+            let seen_ids = seen_ids.into_iter().sorted().map(String::from).join(",");
             assert_eq!(seen_ids, expected_ids);
         }
     }
@@ -698,7 +696,7 @@ mod tests {
             ),
             (
                 Some(ProxyFilter {
-                    id: Some("FooBar".into()),
+                    id: Some(NonEmptyString::from_static("FooBar")),
                     ..Default::default()
                 }),
                 Err(ProxySelectError::ProxyDBError::<_, Infallible>(
@@ -713,7 +711,7 @@ mod tests {
             ),
             (
                 Some(ProxyFilter {
-                    id: Some("1316455915".into()),
+                    id: Some(NonEmptyString::from_static("1316455915")),
                     country: Some(vec![StringFilter::new("BE")]),
                     mobile: Some(true),
                     residential: Some(true),
@@ -793,7 +791,7 @@ mod tests {
             ),
             (
                 Some(ProxyFilter {
-                    id: Some("FooBar".into()),
+                    id: Some(NonEmptyString::from_static("FooBar")),
                     ..Default::default()
                 }),
                 Err(ProxySelectError::ProxyDBError::<_, Infallible>(
@@ -808,7 +806,7 @@ mod tests {
             ),
             (
                 Some(ProxyFilter {
-                    id: Some("1316455915".into()),
+                    id: Some(NonEmptyString::from_static("1316455915")),
                     country: Some(vec![StringFilter::new("BE")]),
                     mobile: Some(true),
                     residential: Some(true),
@@ -827,7 +825,7 @@ mod tests {
             // match found, but due to custom predicate it won't check, given it is not mobile
             (
                 Some(ProxyFilter {
-                    id: Some("1316455915".into()),
+                    id: Some(NonEmptyString::from_static("1316455915")),
                     ..Default::default()
                 }),
                 Err(ProxySelectError::ProxyDBError::<_, Infallible>(

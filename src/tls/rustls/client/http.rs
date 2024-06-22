@@ -1,14 +1,14 @@
 use crate::error::{BoxError, ErrorExt};
 use crate::http::client::{ClientConnection, EstablishedClientConnection};
 use crate::http::{Request, RequestContext};
+use crate::net::stream::Stream;
+use crate::net::Protocol;
 use crate::service::{Context, Service};
-use crate::stream::Stream;
 use crate::tls::rustls::dep::pki_types::ServerName;
 use crate::tls::rustls::dep::rustls::RootCertStore;
 use crate::tls::rustls::dep::tokio_rustls::{client::TlsStream, TlsConnector};
 use crate::tls::rustls::verify::NoServerCertVerifier;
 use crate::tls::HttpsTunnel;
-use crate::uri::Scheme;
 use crate::{service::Layer, tls::rustls::dep::rustls::ClientConfig};
 use pin_project_lite::pin_project;
 use private::{ConnectorKindAuto, ConnectorKindSecure, ConnectorKindTunnel};
@@ -188,9 +188,9 @@ where
             self.inner.serve(ctx, req).await.map_err(Into::into)?;
 
         let (addr, stream) = conn.into_parts();
-        let request_ctx = ctx.get_or_insert_with(|| RequestContext::new(&req));
+        let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
 
-        if !request_ctx.scheme.secure() {
+        if !request_ctx.protocol.secure() {
             return Ok(EstablishedClientConnection {
                 ctx,
                 req,
@@ -203,8 +203,8 @@ where
             });
         }
 
-        let host = match request_ctx.host.as_deref() {
-            Some(host) => host,
+        let host = match request_ctx.authority.as_ref() {
+            Some(authority) => authority.host().to_string(),
             None => {
                 return Err("missing http host".into());
             }
@@ -252,11 +252,17 @@ where
 
         let (addr, stream) = conn.into_parts();
 
-        let request_ctx = ctx.get_or_insert_with(|| RequestContext::new(&req)).clone();
-        if let Some(new_scheme) = match request_ctx.scheme {
-            Scheme::Http => Some(crate::http::dep::http::uri::Scheme::HTTPS),
-            Scheme::Ws => Some("wss".parse().unwrap()),
-            Scheme::Empty | Scheme::Custom(_) | Scheme::Https | Scheme::Wss => None,
+        let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
+        let request_ctx = request_ctx.clone();
+
+        if let Some(new_scheme) = match request_ctx.protocol {
+            Protocol::Http => Some(crate::http::dep::http::uri::Scheme::HTTPS),
+            Protocol::Ws => Some("wss".parse().unwrap()),
+            Protocol::Custom(_)
+            | Protocol::Https
+            | Protocol::Wss
+            | Protocol::Socks5
+            | Protocol::Socks5h => None,
         } {
             let (mut parts, body) = req.into_parts();
             let mut uri_parts = parts.uri.into_parts();
@@ -266,8 +272,8 @@ where
             ctx.insert(RequestContext::new(&req));
         }
 
-        let host = match request_ctx.host.as_deref() {
-            Some(host) => host,
+        let host = match request_ctx.authority.as_ref() {
+            Some(authority) => authority.host().to_string(),
             None => {
                 return Err("missing http host".into());
             }

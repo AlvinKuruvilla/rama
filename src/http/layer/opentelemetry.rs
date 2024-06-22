@@ -13,8 +13,8 @@ use crate::{
         headers::{HeaderMapExt, UserAgent},
         IntoResponse, Request, RequestContext, Response,
     },
+    net::stream::SocketInfo,
     service::{Context, Layer, Service},
-    stream::SocketInfo,
 };
 use headers::ContentLength;
 use std::{fmt, sync::Arc, time::SystemTime};
@@ -34,7 +34,7 @@ const HTTP_SERVER_ACTIVE_REQUESTS: &str = "http.server.active_requests";
 // TODO: do we also want to track actual calculated body size?
 // this would mean we _need_ to buffer the body, which is not ideal
 // Perhaps make it opt-in?
-// NOTE: we could also make this opt-in via BytesRWTrackerHandle (rama::stream::BytesRWTrackerHandle)
+// NOTE: we could also make this opt-in via BytesRWTrackerHandle (rama::net::stream::BytesRWTrackerHandle)
 // this would however not work properly (I think) with h2/h3...
 // const HTTP_SERVER_REQUEST_SIZE: &str = "http.server.request.size";
 // const HTTP_SERVER_RESPONSE_SIZE: &str = "http.server.response.size";
@@ -139,6 +139,15 @@ pub struct RequestMetricsService<S> {
     metrics: Arc<Metrics>,
 }
 
+impl<S> RequestMetricsService<S> {
+    /// Create a new [`RequestMetricsService`].
+    pub fn new(inner: S) -> Self {
+        RequestMetricsLayer::new().layer(inner)
+    }
+
+    define_inner_service_accessors!();
+}
+
 impl<S: fmt::Debug> fmt::Debug for RequestMetricsService<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RequestMetricsService")
@@ -223,12 +232,10 @@ fn compute_attributes<State, Body>(ctx: &mut Context<State>, req: &Request<Body>
     }
 
     // server info
-    let request_ctx = ctx.get_or_insert_with::<RequestContext>(|| RequestContext::from(req));
-    if let Some(host) = request_ctx.host.as_ref() {
-        attributes.push(KeyValue::new(SERVER_ADDRESS, host.to_string()));
-    }
-    if let Some(port) = request_ctx.port {
-        attributes.push(KeyValue::new(SERVER_PORT, port as i64));
+    let request_ctx: &RequestContext = ctx.get_or_insert_from(req);
+    if let Some(authority) = request_ctx.authority.as_ref() {
+        attributes.push(KeyValue::new(SERVER_ADDRESS, authority.host().to_string()));
+        attributes.push(KeyValue::new(SERVER_PORT, authority.port() as i64));
     }
 
     // Request Info
@@ -241,7 +248,7 @@ fn compute_attributes<State, Body>(ctx: &mut Context<State>, req: &Request<Body>
         Some("") | None => (),
         Some(query) => attributes.push(KeyValue::new(URL_QUERY, query.to_owned())),
     }
-    attributes.push(KeyValue::new(URL_SCHEME, request_ctx.scheme.to_string()));
+    attributes.push(KeyValue::new(URL_SCHEME, request_ctx.protocol.to_string()));
 
     // Common attrs (Request Info)
     // <https://github.com/open-telemetry/semantic-conventions/blob/v1.21.0/docs/http/http-spans.md#common-attributes>

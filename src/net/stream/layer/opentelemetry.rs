@@ -8,8 +8,8 @@ use crate::telemetry::opentelemetry::{
     semantic_conventions, KeyValue,
 };
 use crate::{
+    net::stream::SocketInfo,
     service::{Context, Layer, Service},
-    stream::SocketInfo,
 };
 use std::{fmt, sync::Arc, time::SystemTime};
 
@@ -98,6 +98,15 @@ pub struct NetworkMetricsService<S> {
     metrics: Arc<Metrics>,
 }
 
+impl<S> NetworkMetricsService<S> {
+    /// Create a new [`NetworkMetricsService`].
+    pub fn new(inner: S) -> Self {
+        NetworkMetricsLayer::new().layer(inner)
+    }
+
+    define_inner_service_accessors!();
+}
+
 impl<S: fmt::Debug> fmt::Debug for NetworkMetricsService<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NetworkMetricsService")
@@ -111,7 +120,7 @@ impl<S, State, Stream> Service<State, Stream> for NetworkMetricsService<S>
 where
     S: Service<State, Stream>,
     State: Send + Sync + 'static,
-    Stream: crate::stream::Stream,
+    Stream: crate::net::stream::Stream,
 {
     type Response = S::Response;
     type Error = S::Error;

@@ -1,7 +1,7 @@
 use crate::{
     http::BodyLimit,
+    net::stream::Stream,
     service::{Context, Layer, Service},
-    stream::Stream,
 };
 use std::fmt;
 
@@ -11,7 +11,7 @@ use std::fmt;
 /// it only is used to add the [`BodyLimit`] value to the [`Context`],
 /// such that the L7 http service can apply the limit when found in that [`Context`].
 ///
-/// [`Stream`]: crate::stream::Stream
+/// [`Stream`]: crate::net::stream::Stream
 /// [`Context`]: crate::service::Context`
 #[derive(Debug, Clone)]
 pub struct BodyLimitLayer {
@@ -84,6 +84,35 @@ impl<S> BodyLimitService<S> {
     }
 
     define_inner_service_accessors!();
+
+    /// Create a new [`BodyLimitService`], with the given limit to be applied to the request only.
+    ///
+    /// See [`BodyLimitLayer`] for more information.
+    pub fn request_only(service: S, limit: usize) -> Self {
+        BodyLimitLayer::request_only(limit).layer(service)
+    }
+
+    /// Create a new [`BodyLimitService`], with the given limit to be applied to the response only.
+    ///
+    /// See [`BodyLimitLayer`] for more information.
+    pub fn response_only(service: S, limit: usize) -> Self {
+        BodyLimitLayer::response_only(limit).layer(service)
+    }
+
+    /// Create a new [`BodyLimitService`], with the given limit to be applied to both the request and response bodies.
+    ///
+    /// See [`BodyLimitLayer`] for more information.
+    pub fn symmetric(service: S, limit: usize) -> Self {
+        BodyLimitLayer::symmetric(limit).layer(service)
+    }
+
+    /// Create a new [`BodyLimitService`], with the given limits
+    /// respectively to be applied to the request and response bodies.
+    ///
+    /// See [`BodyLimitLayer`] for more information.
+    pub fn asymmetric(service: S, request: usize, response: usize) -> Self {
+        BodyLimitLayer::asymmetric(request, response).layer(service)
+    }
 }
 
 impl<S, State, IO> Service<State, IO> for BodyLimitService<S>

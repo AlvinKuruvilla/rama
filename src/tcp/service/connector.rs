@@ -3,9 +3,11 @@ use crate::{
         client::{ClientConnection, EstablishedClientConnection},
         Request, RequestContext,
     },
-    proxy::ProxySocketAddr,
+    net::{
+        address::{Authority, ProxyAddress},
+        stream::ServerSocketAddr,
+    },
     service::{Context, Service},
-    stream::ServerSocketAddr,
 };
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
@@ -52,52 +54,56 @@ where
         mut ctx: Context<State>,
         req: Request<Body>,
     ) -> Result<Self::Response, Self::Error> {
-        match ctx
-            .get::<ProxySocketAddr>()
-            .map(|proxy| *proxy.addr())
-            .or_else(|| ctx.get::<ServerSocketAddr>().map(|server| *server.addr()))
-        {
-            Some(addr) => {
-                let stream = TcpStream::connect(&addr).await?;
+        if let Some(proxy) = ctx.get::<ProxyAddress>() {
+            let addr = resolve_authority(proxy.authority().clone()).await?;
+            let stream = TcpStream::connect(&addr).await?;
+            return Ok(EstablishedClientConnection {
+                ctx,
+                req,
+                conn: ClientConnection::new(stream.peer_addr()?, stream),
+            });
+        }
+
+        // TODO: remove this once we have a cleaner DnsStack >>> CTX <<<< approach *yawn*
+        if let Some(server) = ctx.get::<ServerSocketAddr>() {
+            let stream = TcpStream::connect(*server.addr()).await?;
+            return Ok(EstablishedClientConnection {
+                ctx,
+                req,
+                conn: ClientConnection::new(stream.peer_addr()?, stream),
+            });
+        }
+
+        let request_info: &RequestContext = ctx.get_or_insert_from(&req);
+        match request_info.authority.clone() {
+            Some(authority) => {
+                let socket_addr = resolve_authority(authority).await?;
+                let stream = TcpStream::connect(&socket_addr).await?;
                 Ok(EstablishedClientConnection {
                     ctx,
                     req,
-                    conn: ClientConnection::new(addr, stream),
+                    conn: ClientConnection::new(socket_addr, stream),
                 })
             }
-            None => {
-                let request_info = ctx.get_or_insert_with(|| RequestContext::new(&req));
-                match request_info.authority() {
-                    Some(authority) => {
-                        let socket_addr = resolve_authority(authority).await?;
-                        let stream = TcpStream::connect(&socket_addr).await?;
-                        Ok(EstablishedClientConnection {
-                            ctx,
-                            req,
-                            conn: ClientConnection::new(socket_addr, stream),
-                        })
-                    }
-                    None => Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "missing http authority",
-                    )),
-                }
-            }
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "missing http authority",
+            )),
         }
     }
 }
 
-async fn resolve_authority(authority: String) -> Result<SocketAddr, std::io::Error> {
-    match authority.parse::<SocketAddr>() {
-        Ok(addr) => Ok(addr),
-        Err(_) => tokio::net::lookup_host(&authority)
-            .await
-            .and_then(|mut iter| match iter.next() {
-                Some(addr) => Ok(addr),
-                None => Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("empty host lookup result for authority: {}", authority),
-                )),
-            }),
-    }
+// TODO: support custom dns resolvers
+// TODO: use addr iter instead of just first
+
+async fn resolve_authority(authority: Authority) -> Result<SocketAddr, std::io::Error> {
+    crate::net::lookup_authority(authority)
+        .await
+        .and_then(|mut iter| match iter.next() {
+            Some(addr) => Ok(addr),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "empty host lookup result for authority",
+            )),
+        })
 }
