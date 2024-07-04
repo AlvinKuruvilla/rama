@@ -26,6 +26,7 @@
 use rama::{
     http::{
         client::HttpClient,
+        get_request_context,
         layer::{
             proxy_auth::ProxyAuthLayer,
             trace::TraceLayer,
@@ -128,11 +129,11 @@ async fn main() {
             .expect("bind tcp proxy to 127.0.0.1:62016");
 
         let exec = Executor::graceful(guard.clone());
-        let http_service = HttpServer::auto(exec).service(
+        let http_service = HttpServer::auto(exec.clone()).service(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 // See [`ProxyAuthLayer::with_labels`] for more information,
-                // e.g. can also be used to extract upstream proxy filters
+                // e.g. can also be used to extract upstream proxy filter
                 .layer(ProxyAuthLayer::new(Basic::new("john", "secret")))
                 .layer(UpgradeLayer::new(
                     MethodMatcher::CONNECT,
@@ -170,7 +171,7 @@ async fn http_connect_accept<S>(
 where
     S: Send + Sync + 'static,
 {
-    let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
+    let request_ctx = get_request_context!(ctx, req);
     match &request_ctx.authority {
         Some(authority) => tracing::info!("accept CONNECT to {authority}"),
         None => {
@@ -214,10 +215,12 @@ where
     S: Send + Sync + 'static,
 {
     let client = HttpClient::default();
+    let uri = req.uri().clone();
+    tracing::debug!(uri = %req.uri(), "proxy connect plain text request");
     match client.serve(ctx, req).await {
         Ok(resp) => Ok(resp),
         Err(err) => {
-            tracing::error!(error = %err, "error in client request");
+            tracing::error!(error = %err, uri = %uri, "error in client request");
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(Body::empty())

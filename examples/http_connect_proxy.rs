@@ -59,6 +59,7 @@
 use rama::{
     http::{
         client::HttpClient,
+        get_request_context,
         layer::{
             proxy_auth::ProxyAuthLayer,
             remove_header::{RemoveRequestHeaderLayer, RemoveResponseHeaderLayer},
@@ -71,7 +72,7 @@ use rama::{
         service::web::{extract::Path, match_service},
         Body, IntoResponse, Request, RequestContext, Response, StatusCode,
     },
-    net::{stream::layer::http::BodyLimitLayer, user::Basic},
+    net::{address::Domain, stream::layer::http::BodyLimitLayer, user::Basic},
     rt::Executor,
     service::{
         context::Extensions, layer::HijackLayer, service_fn, Context, Service, ServiceBuilder,
@@ -119,7 +120,7 @@ async fn main() {
                     .layer(ProxyAuthLayer::new(Basic::new("john", "secret")).with_labels::<(PriorityUsernameLabelParser, UsernameOpaqueLabelParser)>())
                     // example of how one might insert an API layer into their proxy
                     .layer(HijackLayer::new(
-                        DomainMatcher::new("echo.example.internal"),
+                        DomainMatcher::new(Domain::from_static("echo.example.internal")),
                         Arc::new(match_service!{
                             HttpMatcher::post("/lucky/:number") => |path: Path<APILuckyParams>| async move {
                                 Json(json!({
@@ -170,7 +171,7 @@ async fn http_connect_accept<S>(
 where
     S: Send + Sync + 'static,
 {
-    let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
+    let request_ctx = get_request_context!(ctx, req);
     match &request_ctx.authority {
         Some(authority) => tracing::info!("accept CONNECT to {authority}"),
         None => {

@@ -1,8 +1,7 @@
 use crate::error::{BoxError, ErrorExt};
 use crate::http::client::{ClientConnection, EstablishedClientConnection};
-use crate::http::{Request, RequestContext};
+use crate::http::{get_request_context, Request};
 use crate::net::stream::Stream;
-use crate::net::Protocol;
 use crate::service::{Context, Service};
 use crate::tls::rustls::dep::pki_types::ServerName;
 use crate::tls::rustls::dep::rustls::RootCertStore;
@@ -188,9 +187,10 @@ where
             self.inner.serve(ctx, req).await.map_err(Into::into)?;
 
         let (addr, stream) = conn.into_parts();
-        let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
+        let request_ctx = get_request_context!(ctx, req);
 
-        if !request_ctx.protocol.secure() {
+        if !request_ctx.protocol.is_secure() {
+            tracing::trace!(uri = %req.uri(), "HttpsConnector(auto): protocol not secure, return inner connection");
             return Ok(EstablishedClientConnection {
                 ctx,
                 req,
@@ -215,6 +215,7 @@ where
 
         let stream = self.handshake(domain, stream).await?;
 
+        tracing::trace!(uri = %req.uri(), "HttpsConnector(auto): protocol secure, established tls connection");
         Ok(EstablishedClientConnection {
             ctx,
             req,
@@ -250,26 +251,27 @@ where
             conn,
         } = self.inner.serve(ctx, req).await.map_err(Into::into)?;
 
+        tracing::trace!(uri = %req.uri(), "HttpsConnector(secure): attempt to secure inner connection");
+
         let (addr, stream) = conn.into_parts();
 
-        let request_ctx: &RequestContext = ctx.get_or_insert_from(&req);
+        let request_ctx = get_request_context!(ctx, req);
         let request_ctx = request_ctx.clone();
 
-        if let Some(new_scheme) = match request_ctx.protocol {
-            Protocol::Http => Some(crate::http::dep::http::uri::Scheme::HTTPS),
-            Protocol::Ws => Some("wss".parse().unwrap()),
-            Protocol::Custom(_)
-            | Protocol::Https
-            | Protocol::Wss
-            | Protocol::Socks5
-            | Protocol::Socks5h => None,
-        } {
+        if let Some(new_scheme) =
+            if request_ctx.protocol.is_http() && !request_ctx.protocol.is_secure() {
+                Some(crate::http::dep::http::uri::Scheme::HTTPS)
+            } else if request_ctx.protocol.is_ws() && !request_ctx.protocol.is_secure() {
+                Some("wss".parse().unwrap())
+            } else {
+                None
+            }
+        {
             let (mut parts, body) = req.into_parts();
             let mut uri_parts = parts.uri.into_parts();
             uri_parts.scheme = Some(new_scheme);
             parts.uri = crate::http::dep::http::uri::Uri::from_parts(uri_parts).unwrap();
             req = Request::from_parts(parts, body);
-            ctx.insert(RequestContext::new(&req));
         }
 
         let host = match request_ctx.authority.as_ref() {
@@ -318,6 +320,7 @@ where
                 .map_err(|err| err.context("invalid DNS Hostname (tls) for https tunnel"))?
                 .to_owned(),
             None => {
+                tracing::trace!(uri = %req.uri(), "HttpsConnector(tunnel): return inner connection: no Https tunnel is requested");
                 return Ok(EstablishedClientConnection {
                     ctx,
                     req,
@@ -333,6 +336,7 @@ where
 
         let stream = self.handshake(domain, stream).await?;
 
+        tracing::trace!(uri = %req.uri(), "HttpsConnector(tunnel): connection secured");
         Ok(EstablishedClientConnection {
             ctx,
             req,

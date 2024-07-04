@@ -1,8 +1,13 @@
 use crate::{
     net::stream::Stream,
     service::{Context, Service},
-    tls::rustls::dep::tokio_rustls::{server::TlsStream, TlsAcceptor},
-    tls::rustls::dep::{rustls::server::Acceptor, tokio_rustls::LazyConfigAcceptor},
+    tls::{
+        rustls::dep::{
+            rustls::server::Acceptor,
+            tokio_rustls::{server::TlsStream, LazyConfigAcceptor, TlsAcceptor},
+        },
+        SecureTransport,
+    },
 };
 use rustls::ServerConfig;
 use std::sync::Arc;
@@ -59,7 +64,7 @@ where
     type Response = S::Response;
     type Error = TlsAcceptorError<S::Error>;
 
-    async fn serve(&self, ctx: Context<T>, stream: IO) -> Result<Self::Response, Self::Error> {
+    async fn serve(&self, mut ctx: Context<T>, stream: IO) -> Result<Self::Response, Self::Error> {
         let acceptor = TlsAcceptor::from(self.config.clone());
 
         let stream = acceptor
@@ -67,6 +72,7 @@ where
             .await
             .map_err(TlsAcceptorError::Accept)?;
 
+        ctx.insert(SecureTransport::default());
         self.inner
             .serve(ctx, stream)
             .await
@@ -98,6 +104,7 @@ where
             .await
             .map_err(TlsAcceptorError::Accept)?;
 
+        ctx.insert(SecureTransport::default());
         self.inner
             .serve(ctx, stream)
             .await
@@ -139,6 +146,7 @@ where
             .await
             .map_err(TlsAcceptorError::Accept)?;
 
+        ctx.insert(SecureTransport::default());
         self.inner
             .serve(ctx, stream)
             .await

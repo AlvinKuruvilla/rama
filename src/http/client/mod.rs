@@ -3,10 +3,16 @@
 
 use crate::{
     error::BoxError,
-    http::{Request, Response, Version},
-    net::stream::Stream,
+    http::{
+        dep::http::uri::PathAndQuery,
+        get_request_context,
+        header::HOST,
+        headers::{self, HeaderMapExt},
+        Request, Response, Version,
+    },
+    net::{address::ProxyAddress, stream::Stream},
     service::{Context, Service},
-    tcp::service::HttpConnector,
+    tcp::client::service::HttpConnector,
     tls::rustls::client::{AutoTlsStream, HttpsConnector},
 };
 use hyper_util::rt::TokioIo;
@@ -86,9 +92,20 @@ where
 
     async fn serve(
         &self,
-        ctx: Context<State>,
+        mut ctx: Context<State>,
         req: Request<Body>,
     ) -> Result<Self::Response, Self::Error> {
+        // sanitize subject line request uri
+        // because Hyper (http) writes the URI as-is
+        //
+        // Originally reported in and fixed for:
+        // <https://github.com/plabayo/rama/issues/250>
+        //
+        // TODO: fix this in hyper fork (embedded in rama http core)
+        // directly instead of here...
+        let req = sanitize_client_req_header(&mut ctx, req)?;
+
+        // clone the request uri for error reporting
         let uri = req.uri().clone();
 
         let EstablishedClientConnection { ctx, req, conn } =
@@ -145,4 +162,51 @@ where
         let resp = resp.map(crate::http::Body::new);
         Ok(resp)
     }
+}
+
+fn sanitize_client_req_header<S, B>(
+    ctx: &mut Context<S>,
+    req: Request<B>,
+) -> Result<Request<B>, HttpClientError> {
+    Ok(match req.method() {
+        &http::Method::CONNECT => {
+            // CONNECT
+            if req.uri().host().is_none() {
+                return Err(
+                    HttpClientError::from_display("missing host in CONNECT request")
+                        .with_uri(req.uri().clone()),
+                );
+            }
+            req
+        }
+        _ => {
+            // GET | HEAD | POST | PUT | DELETE | OPTIONS | TRACE | PATCH
+            if !ctx.contains::<ProxyAddress>() && req.uri().host().is_some() {
+                // ensure request context is defined prior to doing this, as otherwise we can get issues
+                let _ = get_request_context!(*ctx, req);
+
+                tracing::trace!("remove authority and scheme from non-connect direct http request");
+                let (mut parts, body) = req.into_parts();
+                let mut uri_parts = parts.uri.into_parts();
+                uri_parts.scheme = None;
+                let authority = uri_parts
+                    .authority
+                    .take()
+                    .expect("to exist due to our host existence test");
+                if uri_parts.path_and_query.as_ref().map(|pq| pq.as_str()) == Some("/") {
+                    uri_parts.path_and_query = Some(PathAndQuery::from_static("/"));
+                }
+
+                if !parts.headers.contains_key(HOST) {
+                    parts.headers.typed_insert(headers::Host::from(authority));
+                }
+
+                parts.uri =
+                    crate::http::Uri::from_parts(uri_parts).map_err(HttpClientError::from_std)?;
+                Request::from_parts(parts, body)
+            } else {
+                req
+            }
+        }
+    })
 }

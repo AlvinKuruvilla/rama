@@ -7,7 +7,7 @@
 //! [`service::matcher` module]: crate::service::matcher
 use crate::{
     http::Request,
-    net::stream::matcher::SocketMatcher,
+    net::{address::Domain, stream::matcher::SocketMatcher},
     service::{context::Extensions, matcher::IteratorMatcherExt, Context},
 };
 use std::fmt;
@@ -346,7 +346,7 @@ impl<State, Body> HttpMatcher<State, Body> {
     }
 
     /// Create a [`DomainMatcher`] matcher.
-    pub fn domain(domain: impl Into<String>) -> Self {
+    pub fn domain(domain: Domain) -> Self {
         Self {
             kind: HttpMatcherKind::Domain(DomainMatcher::new(domain)),
             negate: false,
@@ -356,14 +356,14 @@ impl<State, Body> HttpMatcher<State, Body> {
     /// Create a [`DomainMatcher`] matcher to also match on top of the existing set of [`HttpMatcher`] matchers.
     ///
     /// See [`DomainMatcher`] for more information.
-    pub fn and_domain(self, domain: impl Into<String>) -> Self {
+    pub fn and_domain(self, domain: Domain) -> Self {
         self.and(Self::domain(domain))
     }
 
     /// Create a [`DomainMatcher`] matcher to match as an alternative to the existing set of [`HttpMatcher`] matchers.
     ///
     /// See [`DomainMatcher`] for more information.
-    pub fn or_domain(self, domain: impl Into<String>) -> Self {
+    pub fn or_domain(self, domain: Domain) -> Self {
         self.or(Self::domain(domain))
     }
 
@@ -405,7 +405,7 @@ impl<State, Body> HttpMatcher<State, Body> {
     }
 
     /// Create a [`UriMatcher`] matcher to match as an alternative to the existing set of [`HttpMatcher`] matchers.
-    ///    
+    ///
     /// See [`UriMatcher`] for more information.
     pub fn or_uri(self, re: impl AsRef<str>) -> Self {
         self.or(Self::uri(re))
@@ -723,7 +723,7 @@ mod test {
     }
 
     #[test]
-    fn test_matcher_ands_combination() {
+    fn test_matcher_and_combination() {
         for v in [true, false].into_iter().permutations(3) {
             let expected = v[0] && v[1] && v[2];
             let a = HttpMatcher::custom(BooleanMatcher(v[0]));
@@ -743,7 +743,7 @@ mod test {
     }
 
     #[test]
-    fn test_matcher_negation_with_ands_combination() {
+    fn test_matcher_negation_with_and_combination() {
         for v in [true, false].into_iter().permutations(3) {
             let expected = !v[0] && v[1] && v[2];
             let a = HttpMatcher::custom(BooleanMatcher(v[0]));
@@ -763,7 +763,7 @@ mod test {
     }
 
     #[test]
-    fn test_matcher_ands_combination_negated() {
+    fn test_matcher_and_combination_negated() {
         for v in [true, false].into_iter().permutations(3) {
             let expected = !(v[0] && v[1] && v[2]);
             let a = HttpMatcher::custom(BooleanMatcher(v[0]));

@@ -176,10 +176,8 @@ mod test {
         http::{
             layer::retry::managed::DoNotRetry, BodyExtractExt, IntoResponse, Response, StatusCode,
         },
-        service::{
-            util::{backoff::ExponentialBackoff, rng::HasherRng},
-            Context, ServiceBuilder,
-        },
+        service::{Context, ServiceBuilder},
+        utils::{backoff::ExponentialBackoff, rng::HasherRng},
     };
     use std::{
         sync::{atomic::AtomicUsize, Arc},
@@ -205,7 +203,7 @@ mod test {
             ctx: Context<State>,
             result: Result<Response, E>,
         ) -> (Context<State>, Result<Response, E>, bool) {
-            if ctx.get::<DoNotRetry>().is_some() {
+            if ctx.contains::<DoNotRetry>() {
                 panic!("unexpected retry: should be disabled");
             }
 

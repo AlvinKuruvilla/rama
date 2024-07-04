@@ -219,12 +219,18 @@ mod private {
 
     impl IntoUrlSealed for Uri {
         fn into_url(self) -> Result<Uri, HttpClientError> {
-            let protocol: Protocol = self.scheme().into();
+            let protocol: Option<Protocol> = self.scheme().map(Into::into);
             match protocol {
-                Protocol::Http | Protocol::Https => Ok(self),
-                _ => Err(HttpClientError::from_display(format!(
-                    "Unsupported protocol: {protocol}"
-                ))),
+                Some(protocol) => {
+                    if protocol.is_http() {
+                        Ok(self)
+                    } else {
+                        Err(HttpClientError::from_display(format!(
+                            "Unsupported protocol: {protocol}"
+                        )))
+                    }
+                }
+                None => Err(HttpClientError::from_display("Missing scheme in URI")),
             }
         }
     }
@@ -677,7 +683,8 @@ mod test {
             },
             IntoResponse,
         },
-        service::{util::backoff::ExponentialBackoff, BoxService, ServiceBuilder},
+        service::{BoxService, ServiceBuilder},
+        utils::backoff::ExponentialBackoff,
     };
     use std::convert::Infallible;
 
